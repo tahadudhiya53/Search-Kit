@@ -1,0 +1,71 @@
+{
+    "name": "tahadudhiya/craft-search-kit",
+    "description": "A comprehensive search management and intelligence platform for Craft CMS.",
+    "type": "craft-plugin",
+    "version": "0.1.0",
+    "license": "proprietary",
+    "keywords": [
+        "craft",
+        "craftcms",
+        "craft-plugin",
+        "search",
+        "search-kit",
+        "indexing",
+        "search-analytics"
+    ],
+    "authors": [
+        {
+            "name": "Taha Dudhiya"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/tahadudhiya53/Search-Kit/issues",
+        "source": "https://github.com/tahadudhiya53/Search-Kit",
+        "docs": "https://github.com/tahadudhiya53/Search-Kit#readme",
+        "rss": "https://github.com/tahadudhiya53/Search-Kit/releases.atom"
+    },
+    "require": {
+        "php": ">=8.2.0",
+        "craftcms/cms": "^5.0.0"
+    },
+    "require-dev": {
+        "craftcms/ecs": "dev-main",
+        "craftcms/phpstan": "dev-main",
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Tahadudhiya\\SearchKit\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tahadudhiya\\SearchKit\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "class": "Tahadudhiya\\SearchKit\\SearchKit",
+        "handle": "search-kit",
+        "name": "SearchKit",
+        "developer": "Taha Dudhiya",
+        "documentationUrl": "https://github.com/tahadudhiya53/Search-Kit#readme",
+        "changelogUrl": "https://raw.githubusercontent.com/tahadudhiya53/Search-Kit/main/CHANGELOG.md"
+    },
+    "scripts": {
+        "check-cs": "@php -d error_reporting=6143 vendor/bin/ecs check --ansi",
+        "fix-cs": "@php -d error_reporting=6143 vendor/bin/ecs check --ansi --fix",
+        "phpstan": "@php vendor/bin/phpstan analyse --debug --no-progress --memory-limit=1G",
+        "test": "phpunit"
+    },
+    "config": {
+        "sort-packages": true,
+        "platform": {
+            "php": "8.2.0"
+        },
+        "allow-plugins": {
+            "yiisoft/yii2-composer": true,
+            "craftcms/plugin-installer": true
+        }
+    }
+}

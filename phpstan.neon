@@ -1,0 +1,21 @@
+includes:
+    - vendor/craftcms/phpstan/phpstan.neon
+
+parameters:
+    level: 5
+    paths:
+        - src
+        - tests
+
+    ignoreErrors:
+        # The foundation tests assert what the autoloader resolves at runtime — that the plugin
+        # class is a Craft plugin, that the install migration is a migration. PHPStan reads those
+        # same relationships from the classes themselves, so it reports each assertion as always
+        # true. The checks still earn their place: they are what fails if Composer's autoload map
+        # breaks. Scoped to tests/ so src/ keeps full narrowing analysis.
+        -
+            identifier: function.alreadyNarrowedType
+            path: tests/Unit/*
+        -
+            identifier: staticMethod.alreadyNarrowedType
+            path: tests/Unit/*
