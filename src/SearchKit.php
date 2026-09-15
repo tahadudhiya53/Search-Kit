@@ -2,36 +2,56 @@
 
 namespace Tahadudhiya\SearchKit;
 
-use Craft;
 use craft\base\Plugin;
+use Tahadudhiya\SearchKit\services\Indexes;
+use Tahadudhiya\SearchKit\services\Providers;
+use Tahadudhiya\SearchKit\services\Search;
+use Tahadudhiya\SearchKit\services\SearchableFields;
 
 /**
  * SearchKit — search management and intelligence for Craft CMS.
  *
- * This class is deliberately thin, and stays that way: search behaviour belongs in services and
- * components registered from `init()` as they are built, never here. Nothing in the foundation
- * schedules work, reads project config, or touches the database at construction time.
-*/
+ * @property-read Indexes $indexes
+ * @property-read Providers $providers
+ * @property-read Search $search
+ * @property-read SearchableFields $searchableFields
+ */
 class SearchKit extends Plugin
 {
-    /**
-     * @inheritdoc Bump this whenever `migrations/Install.php` gains schema, so existing installs
-     * are offered the matching update migration.
-    */
-    public string $schemaVersion = '0.1.0';
+    /** @var string The category SearchKit logs under. */
+    public const LOG_CATEGORY = 'search-kit';
 
-    /**
-     * @inheritdoc
-    */
-    public function init(): void
+    public string $schemaVersion = '1.1.0';
+
+    public static function config(): array
     {
-        parent::init();
+        return [
+            'components' => [
+                'indexes' => ['class' => Indexes::class],
+                'providers' => ['class' => Providers::class],
+                'search' => ['class' => Search::class],
+                'searchableFields' => ['class' => SearchableFields::class],
+            ],
+        ];
+    }
 
-        // Craft is only partly booted while plugins are being constructed, so anything that reads
-        // project config, the database, or other plugins has to wait for this callback. Component
-        // registration — services, CP nav, URL rules, permissions, Twig variables — lands inside
-        // it as the plugin grows.
-        Craft::$app->onInit(function() {
-        });
+    public function getIndexes(): Indexes
+    {
+        return $this->get('indexes');
+    }
+
+    public function getProviders(): Providers
+    {
+        return $this->get('providers');
+    }
+
+    public function getSearch(): Search
+    {
+        return $this->get('search');
+    }
+
+    public function getSearchableFields(): SearchableFields
+    {
+        return $this->get('searchableFields');
     }
 }
