@@ -46,8 +46,13 @@ class SearchProviderTest extends TestCase
         $provider = new CraftProvider();
 
         self::assertTrue($provider->supports(ProviderCapability::Search));
+        self::assertTrue($provider->supports(ProviderCapability::Filtering));
+        self::assertTrue($provider->supports(ProviderCapability::Sorting));
+
+        // Craft scores and stores keywords itself, so these would be claims SearchKit cannot keep.
         self::assertFalse($provider->supports(ProviderCapability::FieldWeighting));
-        self::assertFalse($provider->supports(ProviderCapability::Filtering));
         self::assertFalse($provider->supports(ProviderCapability::Highlighting));
+        self::assertFalse($provider->supports(ProviderCapability::Deleting));
+        self::assertFalse($provider->supports(ProviderCapability::Rebuilding));
     }
 }
