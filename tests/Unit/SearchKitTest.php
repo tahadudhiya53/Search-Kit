@@ -5,17 +5,16 @@ namespace Tahadudhiya\SearchKit\Tests\Unit;
 use craft\base\Plugin;
 use craft\db\Migration;
 use PHPUnit\Framework\TestCase;
-use Tahadudhiya\SearchKit\migrations\Install;
 use Tahadudhiya\SearchKit\SearchKit;
+use Tahadudhiya\SearchKit\services\Indexes;
+use Tahadudhiya\SearchKit\services\Providers;
+use Tahadudhiya\SearchKit\services\Search;
+use Tahadudhiya\SearchKit\services\SearchableFields;
 
 /**
- * Covers the plugin foundation: that Composer autoloading resolves both classes, that the plugin
- * class is a Craft plugin declaring the metadata Craft reads, and that the install/uninstall
- * migration lifecycle is wired.
- *
- * These assert against the classes rather than a booted Craft app; installing into a real Craft
- * install is verified separately (`php craft plugin/install search-kit`).
-*/
+ * Covers what Craft reads from the plugin itself: autoloading, metadata, and the components it
+ * registers. Installing into a real Craft install is verified separately.
+ */
 class SearchKitTest extends TestCase
 {
     private const PLUGIN_CLASS = 'Tahadudhiya\\SearchKit\\SearchKit';
@@ -28,9 +27,7 @@ class SearchKitTest extends TestCase
 
     public function testPluginExtendsCraftPluginBaseClass(): void
     {
-        // Class names as strings, not ::class: these assert what the *autoloader* resolves at
-        // runtime, which is the point of a foundation test. Referencing the classes directly would
-        // let static analysis narrow both sides and report the assertion as always true.
+        // Asserted through a string so static analysis cannot narrow away what the autoloader does.
         self::assertTrue(is_subclass_of(self::PLUGIN_CLASS, Plugin::class));
     }
 
@@ -57,19 +54,13 @@ class SearchKitTest extends TestCase
         self::assertTrue(is_subclass_of(self::INSTALL_MIGRATION_CLASS, Migration::class));
     }
 
-    /**
-     * Craft reads the return value of both, and a migration returning false is reported as a
-     * failed install/uninstall.
-     *
-     * Constructed without `init()`, which resolves Yii's `db` application component and so needs a
-     * booted app: while the migration has no schema, neither method touches the connection. Once
-     * schema lands here this has to become an integration test against a real Craft install.
-    */
-    public function testInstallMigrationLifecycleSucceeds(): void
+    public function testServiceComponentsAreRegistered(): void
     {
-        $migration = (new \ReflectionClass(Install::class))->newInstanceWithoutConstructor();
+        $components = SearchKit::config()['components'];
 
-        self::assertTrue($migration->safeUp());
-        self::assertTrue($migration->safeDown());
+        self::assertSame(Indexes::class, $components['indexes']['class']);
+        self::assertSame(Providers::class, $components['providers']['class']);
+        self::assertSame(Search::class, $components['search']['class']);
+        self::assertSame(SearchableFields::class, $components['searchableFields']['class']);
     }
 }
