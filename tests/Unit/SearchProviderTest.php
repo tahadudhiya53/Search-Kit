@@ -2,10 +2,10 @@
 
 namespace Tahadudhiya\SearchKit\Tests\Unit;
 
-use craft\base\ElementInterface;
 use PHPUnit\Framework\TestCase;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\errors\UnsupportedCapabilityException;
+use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\providers\CraftProvider;
 use Tahadudhiya\SearchKit\Tests\Support\MinimalProvider;
@@ -35,7 +35,10 @@ class SearchProviderTest extends TestCase
         $provider = new MinimalProvider();
 
         $this->expectException(UnsupportedCapabilityException::class);
-        $provider->deleteElement(new SearchIndex(['handle' => 'siteSearch']), $this->createMock(ElementInterface::class));
+        $provider->deleteDocument(
+            new SearchIndex(['handle' => 'siteSearch']),
+            SearchDocument::forDeletion(1, 1, 'craft\\elements\\Entry', 'siteSearch'),
+        );
     }
 
     public function testCraftProviderDoesNotClaimCapabilitiesCraftLacks(): void

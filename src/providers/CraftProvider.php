@@ -8,6 +8,7 @@ use craft\elements\db\ElementQueryInterface;
 use Tahadudhiya\SearchKit\base\SearchProvider;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\errors\ProviderException;
+use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchHit;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchQuery;
@@ -17,6 +18,8 @@ use Throwable;
 
 /**
  * Serves searches from Craft's own search index, so SearchKit is useful without external services.
+ * Every index using this provider shares that one Craft index; SearchKit scopes them by configured
+ * element types and sites rather than by separate physical indexes, which Craft does not offer.
  */
 class CraftProvider extends SearchProvider
 {
@@ -28,6 +31,7 @@ class CraftProvider extends SearchProvider
     /**
      * Craft scores results itself: it has no per-field weighting, highlighting, or arbitrary
      * filtering, so SearchKit rejects queries asking for those rather than quietly ignoring them.
+     * Craft also clears an element's keywords itself on delete, so there is nothing here to delete.
      */
     public static function capabilities(): array
     {
@@ -91,30 +95,33 @@ class CraftProvider extends SearchProvider
     }
 
     /**
-     * Craft reads a null field list as “index every field”, so an index that configures no fields
-     * for this element type is a configuration error rather than an implicit index-everything.
+     * Craft reads a null field list as “index every field”, so a document carrying no configured
+     * fields for this element is a configuration error rather than an implicit index-everything.
      */
-    public function indexElement(SearchIndex $index, ElementInterface $element): void
+    public function indexDocument(SearchIndex $index, SearchDocument $document): void
     {
-        $siteId = $element->siteId;
-        $inScope = $siteId !== null ? $index->coversSite($siteId) : $index->coversAllSites();
-
-        if (!$inScope) {
+        if (!$index->coversSite($document->siteId)) {
             throw new ProviderException("The “{$index->handle}” search index does not cover this element's site.");
         }
 
-        $handles = array_keys($index->getFieldWeights($element::class));
-
-        if ($handles === []) {
+        if ($document->isEmpty()) {
             Craft::error(
-                "The “{$index->handle}” search index has no enabled searchable fields for " . $element::class,
+                "The “{$index->handle}” search index has no enabled searchable fields for {$document->elementType}",
                 SearchKit::LOG_CATEGORY,
             );
             throw new ProviderException("The “{$index->handle}” search index is not configured for this element type.");
         }
 
+        // Craft's search service indexes an element, not a document, so this provider needs the
+        // element the document was built from. The document still decides whether it is indexed.
+        $element = $document->getSource();
+
+        if ($element === null) {
+            throw new ProviderException("Element {$document->elementId} is no longer available to index.");
+        }
+
         try {
-            $indexed = Craft::$app->getSearch()->indexElementAttributes($element, $handles);
+            $indexed = Craft::$app->getSearch()->indexElementAttributes($element, $document->getFieldHandles());
         } catch (Throwable $e) {
             Craft::error("Craft could not index element {$element->id}: {$e->getMessage()}", SearchKit::LOG_CATEGORY);
             throw new ProviderException("Craft could not index element {$element->id}.", 0, $e);
