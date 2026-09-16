@@ -17,6 +17,19 @@ enum FilterOperator: string
     case LessThanOrEquals = 'lte';
 
     /**
+     * Whether the operator orders two values rather than matching them.
+     */
+    public function isComparison(): bool
+    {
+        return in_array($this, [
+            self::GreaterThan,
+            self::GreaterThanOrEquals,
+            self::LessThan,
+            self::LessThanOrEquals,
+        ], true);
+    }
+
+    /**
      * Whether the operator compares against a list rather than a single value.
      */
     public function expectsArray(): bool

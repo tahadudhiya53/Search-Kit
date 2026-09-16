@@ -1,0 +1,258 @@
+<?php
+
+namespace Tahadudhiya\SearchKit\controllers;
+
+use Craft;
+use craft\base\ElementInterface;
+use craft\web\Controller;
+use Tahadudhiya\SearchKit\base\SearchProviderInterface;
+use Tahadudhiya\SearchKit\models\SearchableField;
+use Tahadudhiya\SearchKit\models\SearchIndex;
+use Tahadudhiya\SearchKit\providers\CraftProvider;
+use Tahadudhiya\SearchKit\SearchKit;
+use yii\web\ForbiddenHttpException;
+use yii\web\NotFoundHttpException;
+use yii\web\Response;
+
+/**
+ * Manages search indexes, their searchable fields, and the indexing work they owe.
+ */
+class IndexesController extends Controller
+{
+    public function beforeAction($action): bool
+    {
+        if (!parent::beforeAction($action)) {
+            return false;
+        }
+
+        $this->requirePermission(SearchKit::PERMISSION_VIEW);
+
+        return true;
+    }
+
+    public function actionIndex(): Response
+    {
+        $plugin = $this->plugin();
+        $indexes = $plugin->getIndexes()->getAllIndexes();
+        $statuses = [];
+
+        foreach ($indexes as $index) {
+            $statuses[$index->handle] = $plugin->getIndexing()->getStatus($index);
+        }
+
+        return $this->renderTemplate('search-kit/_index', [
+            'indexes' => $indexes,
+            'statuses' => $statuses,
+            'canManage' => $this->canManage(),
+            'canRebuild' => $this->canRebuild(),
+        ]);
+    }
+
+    public function actionEdit(?int $indexId = null, ?SearchIndex $index = null): Response
+    {
+        $plugin = $this->plugin();
+        $index ??= $indexId !== null
+            ? $plugin->getIndexes()->getIndexById($indexId)
+            : new SearchIndex(['provider' => CraftProvider::class]);
+
+        if ($index === null) {
+            throw new NotFoundHttpException('Search index not found.');
+        }
+
+        $plugin->getSearchableFields()->attachFields($index);
+
+        $elementTypeGroups = [];
+
+        foreach ($plugin->getSearchableFields()->getIndexableElementTypes() as $elementType) {
+            /** @var class-string<ElementInterface> $elementType */
+            $elementTypeGroups[] = [
+                'type' => $elementType,
+                'label' => $elementType::displayName(),
+                'handles' => $plugin->getSearchableFields()->getAvailableHandles($elementType),
+            ];
+        }
+
+        $providerOptions = [];
+
+        foreach ($plugin->getProviders()->getAllProviderTypes() as $providerType) {
+            /** @var class-string<SearchProviderInterface> $providerType */
+            $providerOptions[] = ['label' => $providerType::displayName(), 'value' => $providerType];
+        }
+
+        return $this->renderTemplate('search-kit/_edit', [
+            'index' => $index,
+            'isNew' => $index->id === null,
+            'providerOptions' => $providerOptions,
+            'elementTypeGroups' => $elementTypeGroups,
+            'status' => $index->id !== null ? $plugin->getIndexing()->getStatus($index) : null,
+            'failures' => $index->id !== null ? $plugin->getIndexOperations()->getFailed($index->id) : [],
+            'canManage' => $this->canManage(),
+            'canRebuild' => $this->canRebuild(),
+        ]);
+    }
+
+    public function actionSave(): ?Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission(SearchKit::PERMISSION_MANAGE);
+
+        $plugin = $this->plugin();
+        $request = $this->request;
+        $indexId = $request->getBodyParam('indexId');
+
+        $index = $indexId !== null
+            ? $plugin->getIndexes()->getIndexById((int)$indexId)
+            : new SearchIndex();
+
+        if ($index === null) {
+            throw new NotFoundHttpException('Search index not found.');
+        }
+
+        $index->name = (string)$request->getBodyParam('name', $index->name);
+        $index->handle = (string)$request->getBodyParam('handle', $index->handle);
+        $index->provider = (string)$request->getBodyParam('provider', $index->provider);
+        $index->enabled = (bool)$request->getBodyParam('enabled', true);
+
+        $siteId = $request->getBodyParam('siteId');
+        $index->siteId = $siteId !== null && $siteId !== '' ? (int)$siteId : null;
+
+        $fields = $this->resolveFields(
+            $request->getBodyParam('elementTypes', []),
+            $request->getBodyParam('fields', []),
+        );
+
+        if (!$plugin->getIndexes()->saveIndexConfiguration($index, $fields)) {
+            return $this->failure($index, $fields);
+        }
+
+        $this->setSuccessFlash(Craft::t('search-kit', 'Search index saved.'));
+
+        return $this->redirectToPostedUrl($index);
+    }
+
+    public function actionDelete(): Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission(SearchKit::PERMISSION_MANAGE);
+
+        $index = $this->requireIndex();
+        $this->plugin()->getIndexes()->deleteIndex($index);
+        $this->setSuccessFlash(Craft::t('search-kit', 'Search index deleted.'));
+
+        return $this->redirect('search-kit');
+    }
+
+    public function actionRebuild(): Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission(SearchKit::PERMISSION_REBUILD);
+
+        $index = $this->requireIndex();
+        $this->plugin()->getIndexing()->queueRebuild($index);
+        $this->setSuccessFlash(Craft::t('search-kit', 'Rebuild queued.'));
+
+        return $this->redirectToPostedUrl();
+    }
+
+    public function actionRetryFailed(): Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission(SearchKit::PERMISSION_REBUILD);
+
+        $index = $this->requireIndex();
+        $reset = $this->plugin()->getIndexing()->retryFailed($index);
+        $this->setSuccessFlash(Craft::t('search-kit', '{count} operations queued for retry.', ['count' => $reset]));
+
+        return $this->redirectToPostedUrl();
+    }
+
+    /**
+     * Element types travel as their own posted values rather than as array keys, so a class name
+     * never has to survive being used as an input name.
+     *
+     * @param mixed $postedTypes
+     * @param mixed $postedRows
+     * @return SearchableField[]
+     */
+    private function resolveFields(mixed $postedTypes, mixed $postedRows): array
+    {
+        if (!is_array($postedTypes) || !is_array($postedRows)) {
+            return [];
+        }
+
+        $indexable = $this->plugin()->getSearchableFields()->getIndexableElementTypes();
+        $fields = [];
+
+        foreach ($postedTypes as $group => $elementType) {
+            $rows = $postedRows[$group] ?? null;
+
+            if (!is_array($rows) || !in_array($elementType, $indexable, true)) {
+                continue;
+            }
+
+
+            foreach ($rows as $row) {
+                $handle = is_array($row) ? trim((string)($row['handle'] ?? '')) : '';
+
+                if ($handle === '') {
+                    continue;
+                }
+
+                $fields[] = new SearchableField([
+                    'elementType' => (string)$elementType,
+                    'handle' => $handle,
+                    'weight' => max(0, (int)($row['weight'] ?? SearchableField::DEFAULT_WEIGHT)),
+                    'enabled' => (bool)($row['enabled'] ?? true),
+                ]);
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
+     * @param SearchableField[] $fields
+     */
+    private function failure(SearchIndex $index, array $fields): null
+    {
+        $index->setFields($fields);
+        $this->setFailFlash(Craft::t('search-kit', 'Couldn’t save search index.'));
+
+        Craft::$app->getUrlManager()->setRouteParams(['index' => $index]);
+
+        return null;
+    }
+
+    private function requireIndex(): SearchIndex
+    {
+        $indexId = (int)$this->request->getRequiredBodyParam('indexId');
+        $index = $this->plugin()->getIndexes()->getIndexById($indexId);
+
+        if ($index === null) {
+            throw new NotFoundHttpException('Search index not found.');
+        }
+
+        return $index;
+    }
+
+    private function canManage(): bool
+    {
+        return Craft::$app->getUser()->checkPermission(SearchKit::PERMISSION_MANAGE);
+    }
+
+    private function canRebuild(): bool
+    {
+        return Craft::$app->getUser()->checkPermission(SearchKit::PERMISSION_REBUILD);
+    }
+
+    private function plugin(): SearchKit
+    {
+        $plugin = SearchKit::getInstance();
+
+        if ($plugin === null) {
+            throw new ForbiddenHttpException('SearchKit is not installed.');
+        }
+
+        return $plugin;
+    }
+}

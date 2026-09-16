@@ -2,9 +2,9 @@
 
 namespace Tahadudhiya\SearchKit\Tests\Support;
 
-use craft\base\ElementInterface;
 use Tahadudhiya\SearchKit\base\SearchProvider;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
+use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\models\SearchResult;
@@ -27,7 +27,7 @@ class MinimalProvider extends SearchProvider
         return new SearchResult(['indexHandle' => $index->handle]);
     }
 
-    public function indexElement(SearchIndex $index, ElementInterface $element): void
+    public function indexDocument(SearchIndex $index, SearchDocument $document): void
     {
     }
 }

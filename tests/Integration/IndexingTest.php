@@ -9,6 +9,7 @@ use craft\elements\Asset;
 use craft\elements\Entry;
 use Tahadudhiya\SearchKit\errors\ProviderException;
 use Tahadudhiya\SearchKit\models\SearchableField;
+use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\providers\CraftProvider;
 
@@ -23,7 +24,7 @@ class IndexingTest extends IntegrationTestCase
         $entry = $this->anEntry();
         $index = $this->indexWithFields([Entry::class => 'title']);
 
-        (new CraftProvider())->indexElement($index, $entry);
+        (new CraftProvider())->indexDocument($index, $this->documentFor($index, $entry));
 
         self::assertGreaterThan(0, $this->keywordRowCount($entry->id, $entry->siteId));
     }
@@ -34,7 +35,7 @@ class IndexingTest extends IntegrationTestCase
         $entry = $this->anEntry($siteId);
         $index = $this->indexWithFields([Entry::class => 'title'], $siteId);
 
-        (new CraftProvider())->indexElement($index, $entry);
+        (new CraftProvider())->indexDocument($index, $this->documentFor($index, $entry));
 
         self::assertGreaterThan(0, $this->keywordRowCount($entry->id, $entry->siteId));
     }
@@ -48,7 +49,7 @@ class IndexingTest extends IntegrationTestCase
         $before = $this->keywordRowCount($entry->id, $entry->siteId);
 
         try {
-            (new CraftProvider())->indexElement($index, $entry);
+            (new CraftProvider())->indexDocument($index, $this->documentFor($index, $entry));
             self::fail('An element outside the index site scope should be rejected.');
         } catch (ProviderException $e) {
             self::assertStringContainsString('does not cover', $e->getMessage());
@@ -64,7 +65,7 @@ class IndexingTest extends IntegrationTestCase
         foreach ($this->sitesWithEntries() as $siteId) {
             $entry = $this->anEntry($siteId);
 
-            (new CraftProvider())->indexElement($index, $entry);
+            (new CraftProvider())->indexDocument($index, $this->documentFor($index, $entry));
 
             self::assertGreaterThan(0, $this->keywordRowCount($entry->id, $entry->siteId));
         }
@@ -78,7 +79,7 @@ class IndexingTest extends IntegrationTestCase
         $before = $this->keywordRowCount($entry->id, $entry->siteId);
 
         try {
-            (new CraftProvider())->indexElement($index, $entry);
+            (new CraftProvider())->indexDocument($index, $this->documentFor($index, $entry));
             self::fail('Indexing an element type the index does not cover should be rejected.');
         } catch (ProviderException $e) {
             self::assertStringContainsString('not configured for this element type', $e->getMessage());
@@ -106,7 +107,7 @@ class IndexingTest extends IntegrationTestCase
         $this->expectException(ProviderException::class);
 
         try {
-            (new CraftProvider())->indexElement($index, $entry);
+            (new CraftProvider())->indexDocument($index, $this->documentFor($index, $entry));
         } finally {
             self::assertSame($before, $this->keywordRowCount($entry->id, $entry->siteId));
         }
@@ -118,7 +119,12 @@ class IndexingTest extends IntegrationTestCase
         $this->plugin()->getSearchableFields()->attachFields($index);
 
         $this->expectException(ProviderException::class);
-        (new CraftProvider())->indexElement($index, $this->anEntry());
+        (new CraftProvider())->indexDocument($index, $this->documentFor($index, $this->anEntry()));
+    }
+
+    private function documentFor(SearchIndex $index, Entry $entry): SearchDocument
+    {
+        return $this->plugin()->getDocuments()->buildDocument($index, $entry);
     }
 
     private function anEntry(?int $siteId = null): Entry

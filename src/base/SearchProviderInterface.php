@@ -3,9 +3,9 @@
 namespace Tahadudhiya\SearchKit\base;
 
 use craft\base\ComponentInterface;
-use craft\base\ElementInterface;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\models\ProviderStatus;
+use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\models\SearchResult;
@@ -30,16 +30,20 @@ interface SearchProviderInterface extends ComponentInterface
     public function search(SearchQuery $query, SearchIndex $index): SearchResult;
 
     /**
-     * Adds or replaces one element in the index.
+     * Adds or replaces one document in the index. Documents are built for the provider, so no
+     * provider ever has to know how a Craft element stores its values.
      *
      * @throws \Tahadudhiya\SearchKit\errors\ProviderException
      */
-    public function indexElement(SearchIndex $index, ElementInterface $element): void;
+    public function indexDocument(SearchIndex $index, SearchDocument $document): void;
 
     /**
+     * Removes one document. The element it described may already be gone, so only its identity
+     * is guaranteed to be present.
+     *
      * @throws \Tahadudhiya\SearchKit\errors\ProviderException
      */
-    public function deleteElement(SearchIndex $index, ElementInterface $element): void;
+    public function deleteDocument(SearchIndex $index, SearchDocument $document): void;
 
     /**
      * Discards and recreates the provider-side index.

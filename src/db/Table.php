@@ -9,4 +9,5 @@ abstract class Table
 {
     public const INDEXES = '{{%searchkit_indexes}}';
     public const SEARCHABLEFIELDS = '{{%searchkit_searchablefields}}';
+    public const INDEXOPERATIONS = '{{%searchkit_indexoperations}}';
 }

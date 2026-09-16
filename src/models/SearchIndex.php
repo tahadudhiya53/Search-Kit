@@ -27,6 +27,24 @@ class SearchIndex extends Model
     /** @var int|null The only site this index covers, or null to cover every site. */
     public ?int $siteId = null;
 
+    /** @var DateTime|null When this index last finished a run with nothing left outstanding. */
+    public ?DateTime $dateLastIndexed = null;
+
+    /**
+     * Which generation of this index's configuration the row represents. A rebuild remembers the
+     * generation it started against and may only settle that one.
+     */
+    public int $configurationVersion = 1;
+
+    /**
+     * Whether the index owes a rebuild: its configuration changed, or its last rebuild left work
+     * behind. Cleared only once a rebuild has covered the current configuration with nothing left.
+     */
+    public bool $rebuildRequired = false;
+
+    /** @var bool A rebuild walked this configuration but did not finish cleanly. */
+    public bool $rebuildPending = false;
+
     public ?DateTime $dateCreated = null;
     public ?DateTime $dateUpdated = null;
     public ?string $uid = null;

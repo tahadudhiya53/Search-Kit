@@ -1,0 +1,102 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = "Search Indexes"|t('search-kit') %}
+
+{% block actionButton %}
+    {% if canManage %}
+        <a href="{{ url('search-kit/indexes/new') }}" class="btn submit add icon">{{ "New search index"|t('search-kit') }}</a>
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+    {% if indexes is empty %}
+        <p>{{ "No search indexes yet."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Name"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Provider"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Site"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Pending"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Failed"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Last indexed"|t('search-kit') }}</th>
+                    <th scope="col">{{ "State"|t('search-kit') }}</th>
+                    <th scope="col"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for index in indexes %}
+                    {% set status = statuses[index.handle] %}
+                    <tr>
+                        <th scope="row" data-title="{{ 'Name'|t('search-kit') }}">
+                            <span class="status {{ index.enabled ? 'enabled' : 'disabled' }}"></span>
+                            <a href="{{ url('search-kit/indexes/' ~ index.id) }}">{{ index.name }}</a>
+                            <code>{{ index.handle }}</code>
+                        </th>
+                        <td data-title="{{ 'Provider'|t('search-kit') }}">
+                            {{ index.provider|split('\\')|last }}
+                            {% if status.provider and not status.provider.available %}
+                                <span class="error">{{ status.provider.message }}</span>
+                            {% endif %}
+                        </td>
+                        <td data-title="{{ 'Site'|t('search-kit') }}">
+                            {%- if index.siteId -%}
+                                {{ craft.app.sites.getSiteById(index.siteId).name ?? index.siteId }}
+                            {%- else -%}
+                                {{ "All sites"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td data-title="{{ 'Pending'|t('search-kit') }}">{{ status.pending }}</td>
+                        <td data-title="{{ 'Failed'|t('search-kit') }}">
+                            {% if status.failed %}<span class="error">{{ status.failed }}</span>{% else %}0{% endif %}
+                        </td>
+                        <td data-title="{{ 'Last indexed'|t('search-kit') }}">
+                            {{ index.dateLastIndexed ? index.dateLastIndexed|datetime('short') : "Never"|t('search-kit') }}
+                        </td>
+                        <td data-title="{{ 'State'|t('search-kit') }}">
+                            {%- if status.rebuildRequired -%}
+                                <span class="error">{{ "Rebuild required"|t('search-kit') }}</span>
+                            {%- elseif status.pending -%}
+                                {{ "Indexing"|t('search-kit') }}
+                            {%- elseif status.isHealthy() -%}
+                                {{ "Current"|t('search-kit') }}
+                            {%- else -%}
+                                {{ "Needs attention"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td class="thin">
+                            {% if canRebuild and status.canIndex and index.enabled %}
+                                <form method="post" accept-charset="UTF-8" class="inline-block">
+                                    {{ csrfInput() }}
+                                    {{ actionInput('search-kit/indexes/rebuild') }}
+                                    {{ hiddenInput('indexId', index.id) }}
+                                    {{ redirectInput('search-kit') }}
+                                    <button type="submit" class="btn">{{ "Rebuild"|t('search-kit') }}</button>
+                                </form>
+                            {% endif %}
+                            {% if canRebuild and status.failed %}
+                                <form method="post" accept-charset="UTF-8" class="inline-block">
+                                    {{ csrfInput() }}
+                                    {{ actionInput('search-kit/indexes/retry-failed') }}
+                                    {{ hiddenInput('indexId', index.id) }}
+                                    {{ redirectInput('search-kit') }}
+                                    <button type="submit" class="btn">{{ "Retry failed"|t('search-kit') }}</button>
+                                </form>
+                            {% endif %}
+                            {% if canManage %}
+                                <form method="post" accept-charset="UTF-8" class="inline-block">
+                                    {{ csrfInput() }}
+                                    {{ actionInput('search-kit/indexes/delete') }}
+                                    {{ hiddenInput('indexId', index.id) }}
+                                    <button type="submit" class="btn" data-confirm="{{ 'Delete this search index?'|t('search-kit') }}">{{ "Delete"|t('search-kit') }}</button>
+                                </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+{% endblock %}

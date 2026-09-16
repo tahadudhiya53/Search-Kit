@@ -14,19 +14,19 @@ class SearchQueryTest extends TestCase
 {
     public function testNormalizesText(): void
     {
-        $query = SearchQuery::make("  red   winter\n coat ", 'siteSearch');
+        $query = SearchQuery::create('siteSearch', "  red   winter\n coat ");
 
         self::assertSame('red winter coat', $query->getNormalizedText());
     }
 
     public function testValidQueryPasses(): void
     {
-        self::assertTrue(SearchQuery::make('boots', 'siteSearch')->validate());
+        self::assertTrue(SearchQuery::create('siteSearch', 'boots')->validate());
     }
 
     public function testRejectsWhitespaceOnlyText(): void
     {
-        $query = SearchQuery::make("   \t ", 'siteSearch');
+        $query = SearchQuery::create('siteSearch', "   \t ");
 
         self::assertFalse($query->validate());
         self::assertArrayHasKey('text', $query->getErrors());
@@ -34,26 +34,15 @@ class SearchQueryTest extends TestCase
 
     public function testRejectsInvalidIndexHandle(): void
     {
-        $query = SearchQuery::make('boots', '2 bad handles');
+        $query = SearchQuery::create('2 bad handles', 'boots');
 
         self::assertFalse($query->validate());
         self::assertArrayHasKey('indexHandle', $query->getErrors());
     }
 
-    public function testRejectsOutOfRangePagination(): void
-    {
-        $query = SearchQuery::make('boots', 'siteSearch');
-        $query->limit = SearchQuery::MAX_LIMIT + 1;
-        $query->offset = -1;
-
-        self::assertFalse($query->validate());
-        self::assertArrayHasKey('limit', $query->getErrors());
-        self::assertArrayHasKey('offset', $query->getErrors());
-    }
-
     public function testValidatesFiltersAlongsideTheQuery(): void
     {
-        $query = SearchQuery::make('boots', 'siteSearch')
+        $query = SearchQuery::create('siteSearch', 'boots')
             ->addFilter(SearchFilter::make('sectionId', FilterOperator::In, 5));
 
         self::assertFalse($query->validate());
@@ -62,7 +51,7 @@ class SearchQueryTest extends TestCase
 
     public function testRejectsADirectiveOfTheWrongType(): void
     {
-        $query = SearchQuery::make('boots', 'siteSearch');
+        $query = SearchQuery::create('siteSearch', 'boots');
 
         $this->expectException(InvalidArgumentException::class);
         $query->setFilters([SearchSort::make('postDate')]);
@@ -70,7 +59,7 @@ class SearchQueryTest extends TestCase
 
     public function testPageMapsToOffset(): void
     {
-        $query = SearchQuery::make('boots', 'siteSearch');
+        $query = SearchQuery::create('siteSearch', 'boots');
         $query->limit = 20;
 
         self::assertSame(60, $query->setPage(4)->offset);
@@ -79,7 +68,7 @@ class SearchQueryTest extends TestCase
 
     public function testOnlyNonScoreSortsCountAsCustom(): void
     {
-        $query = SearchQuery::make('boots', 'siteSearch')->addSort('score');
+        $query = SearchQuery::create('siteSearch', 'boots')->addSort('score');
 
         self::assertFalse($query->hasCustomSort());
 

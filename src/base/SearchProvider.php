@@ -3,10 +3,10 @@
 namespace Tahadudhiya\SearchKit\base;
 
 use craft\base\Component;
-use craft\base\ElementInterface;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\errors\UnsupportedCapabilityException;
 use Tahadudhiya\SearchKit\models\ProviderStatus;
+use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 
 /**
@@ -25,12 +25,12 @@ abstract class SearchProvider extends Component implements SearchProviderInterfa
         return in_array($capability, static::capabilities(), true);
     }
 
-    public function indexElement(SearchIndex $index, ElementInterface $element): void
+    public function indexDocument(SearchIndex $index, SearchDocument $document): void
     {
         throw UnsupportedCapabilityException::for(static::displayName(), ProviderCapability::Indexing);
     }
 
-    public function deleteElement(SearchIndex $index, ElementInterface $element): void
+    public function deleteDocument(SearchIndex $index, SearchDocument $document): void
     {
         throw UnsupportedCapabilityException::for(static::displayName(), ProviderCapability::Deleting);
     }

@@ -1,0 +1,151 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = isNew ? "New search index"|t('search-kit') : index.name %}
+{% set fullPageForm = canManage %}
+{% set crumbs = [{ label: "SearchKit"|t('search-kit'), url: url('search-kit') }] %}
+
+{% set siteOptions = [{ label: "All sites"|t('search-kit'), value: '' }] %}
+{% for site in craft.app.sites.getAllSites() %}
+    {% set siteOptions = siteOptions|merge([{ label: site.name, value: site.id }]) %}
+{% endfor %}
+
+{% block content %}
+    {% if status and status.rebuildRequired %}
+        <div class="readable">
+            <blockquote class="note warning">
+                {{ "This index’s configuration changed since it was last rebuilt, so what the provider holds may no longer match it. Rebuild it from the index list."|t('search-kit') }}
+            </blockquote>
+        </div>
+    {% endif %}
+
+    {{ actionInput('search-kit/indexes/save') }}
+    {% if not isNew %}{{ hiddenInput('indexId', index.id) }}{% endif %}
+    {{ redirectInput('search-kit/indexes/{id}') }}
+
+    {{ forms.textField({
+        first: true,
+        label: "Name"|t('search-kit'),
+        id: 'name',
+        name: 'name',
+        value: index.name,
+        errors: index.getErrors('name'),
+        required: true,
+    }) }}
+
+    {{ forms.textField({
+        label: "Handle"|t('search-kit'),
+        id: 'handle',
+        name: 'handle',
+        class: 'code',
+        value: index.handle,
+        errors: index.getErrors('handle'),
+        required: true,
+        instructions: "How this index is referred to from a search query."|t('search-kit'),
+    }) }}
+
+    {{ forms.selectField({
+        label: "Provider"|t('search-kit'),
+        id: 'provider',
+        name: 'provider',
+        options: providerOptions,
+        value: index.provider,
+        errors: index.getErrors('provider'),
+        instructions: "Changing this requires a rebuild. Whatever the previous provider holds is left untouched."|t('search-kit'),
+    }) }}
+
+    {{ forms.selectField({
+        label: "Site"|t('search-kit'),
+        id: 'siteId',
+        name: 'siteId',
+        options: siteOptions,
+        value: index.siteId,
+        errors: index.getErrors('siteId'),
+        instructions: "An index covers one site or every site. A query can narrow that, never widen it. Changing this requires a rebuild."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Enabled"|t('search-kit'),
+        id: 'enabled',
+        name: 'enabled',
+        on: index.enabled,
+    }) }}
+
+    <hr>
+
+    <h2>{{ "Searchable fields"|t('search-kit') }}</h2>
+    <p>{{ "Which element types this index covers, and how heavily each field counts. Weights are stored for providers that can rank by them."|t('search-kit') }}</p>
+
+    {% if index.getErrors('fields') %}
+        <ul class="errors">{% for error in index.getErrors('fields') %}<li>{{ error }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% for group in elementTypeGroups %}
+        {% set handleOptions = [] %}
+        {% for handle in group.handles %}
+            {% set handleOptions = handleOptions|merge([{ label: handle, value: handle }]) %}
+        {% endfor %}
+
+        {% set rows = [] %}
+        {% for field in index.getFields()|filter(f => f.elementType == group.type) %}
+            {% set rows = rows|merge([{ handle: field.handle, weight: field.weight, enabled: field.enabled }]) %}
+        {% endfor %}
+
+        {{ hiddenInput('elementTypes[' ~ loop.index0 ~ ']', group.type) }}
+
+        {{ forms.editableTableField({
+            label: group.label,
+            instructions: handleOptions is empty ? "No searchable fields are available for this element type."|t('search-kit') : null,
+            id: 'fields-' ~ loop.index0,
+            name: 'fields[' ~ loop.index0 ~ ']',
+            cols: {
+                handle: { heading: "Field"|t('search-kit'), type: 'select', options: handleOptions },
+                weight: { heading: "Weight"|t('search-kit'), type: 'number', min: 0, max: 1000, small: true },
+                enabled: { heading: "Enabled"|t('search-kit'), type: 'lightswitch' },
+            },
+            rows: rows,
+            addRowLabel: "Add a field"|t('search-kit'),
+            static: not canManage or handleOptions is empty,
+        }) }}
+    {% endfor %}
+
+    {% if not isNew %}
+        <hr>
+
+        <h2>{{ "Index status"|t('search-kit') }}</h2>
+        <ul>
+            <li>{{ "Pending operations"|t('search-kit') }}: {{ status.pending }}</li>
+            <li>{{ "Failed operations"|t('search-kit') }}: {{ status.failed }}</li>
+            <li>{{ "Last indexed"|t('search-kit') }}: {{ index.dateLastIndexed ? index.dateLastIndexed|datetime('short') : "Never"|t('search-kit') }}</li>
+            <li>{{ "Rebuild required"|t('search-kit') }}: {{ status.rebuildRequired ? "Yes"|t('search-kit') : "No"|t('search-kit') }}</li>
+            <li>{{ "Provider can index"|t('search-kit') }}: {{ status.canIndex ? "Yes"|t('search-kit') : "No"|t('search-kit') }}</li>
+            <li>{{ "Provider can delete"|t('search-kit') }}: {{ status.canDelete ? "Yes"|t('search-kit') : "No"|t('search-kit') }}</li>
+        </ul>
+
+        {% if failures %}
+            <h3>{{ "Failed operations"|t('search-kit') }}</h3>
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Element"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Operation"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Attempts"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Error"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for failure in failures %}
+                        <tr>
+                            <th scope="row">#{{ failure.elementId }} ({{ failure.elementType|split('\\')|last }})</th>
+                            <td>{{ failure.operation.value }}</td>
+                            <td>{{ failure.attempts }}</td>
+                            <td>{{ failure.error }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endif %}
+
+        <p>{{ "Rebuild and retry are run from the index list."|t('search-kit') }}</p>
+    {% endif %}
+{% endblock %}

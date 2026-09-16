@@ -45,7 +45,8 @@ class Providers extends Component
      */
     public function getProviderForIndex(SearchIndex $index): SearchProviderInterface
     {
-        $key = $index->uid ?? $index->handle;
+        // Keyed by the provider too, so changing an index's provider never hands back the old one.
+        $key = ($index->uid ?? $index->handle) . ':' . $index->provider;
 
         return $this->_providers[$key] ??= $this->createProvider($index);
     }
