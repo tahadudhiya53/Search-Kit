@@ -89,13 +89,13 @@ class PersistenceTest extends IntegrationTestCase
     {
         $index = $this->persistIndex($this->newIndex());
 
-        foreach (['body' => 2, 'title' => 10, 'summary' => 5] as $handle => $weight) {
+        foreach (['slug' => 2, 'title' => 10] as $handle => $weight) {
             $this->saveField($index->id, $handle, $weight);
         }
 
         $weights = $this->plugin()->getSearchableFields()->getFieldsByIndexId($index->id);
 
-        self::assertSame(['title', 'summary', 'body'], array_map(static fn($f) => $f->handle, $weights));
+        self::assertSame(['title', 'slug'], array_map(static fn($f) => $f->handle, $weights));
     }
 
     public function testDeletingAnIndexCascadesToItsFields(): void
