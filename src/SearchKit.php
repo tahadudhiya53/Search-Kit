@@ -9,20 +9,24 @@ use craft\events\RegisterUrlRulesEvent;
 use craft\events\RegisterUserPermissionsEvent;
 use craft\services\Elements;
 use craft\services\UserPermissions;
+use craft\web\twig\variables\CraftVariable;
 use craft\web\UrlManager;
 use Tahadudhiya\SearchKit\services\Documents;
+use Tahadudhiya\SearchKit\services\Highlighting;
 use Tahadudhiya\SearchKit\services\Indexes;
 use Tahadudhiya\SearchKit\services\Indexing;
 use Tahadudhiya\SearchKit\services\IndexOperations;
 use Tahadudhiya\SearchKit\services\Providers;
 use Tahadudhiya\SearchKit\services\Search;
 use Tahadudhiya\SearchKit\services\SearchableFields;
+use Tahadudhiya\SearchKit\variables\SearchKitVariable;
 use yii\base\Event;
 
 /**
  * SearchKit — search management and intelligence for Craft CMS.
  *
  * @property-read Documents $documents
+ * @property-read Highlighting $highlighting
  * @property-read IndexOperations $indexOperations
  * @property-read Indexes $indexes
  * @property-read Indexing $indexing
@@ -39,7 +43,7 @@ class SearchKit extends Plugin
     public const PERMISSION_MANAGE = 'searchKit:manageIndexes';
     public const PERMISSION_REBUILD = 'searchKit:rebuildIndexes';
 
-    public string $schemaVersion = '1.0.1';
+    public string $schemaVersion = '1.5.0';
     public bool $hasCpSection = true;
     public bool $hasCpSettings = false;
 
@@ -48,6 +52,7 @@ class SearchKit extends Plugin
         return [
             'components' => [
                 'documents' => ['class' => Documents::class],
+                'highlighting' => ['class' => Highlighting::class],
                 'indexOperations' => ['class' => IndexOperations::class],
                 'indexes' => ['class' => Indexes::class],
                 'indexing' => ['class' => Indexing::class],
@@ -63,6 +68,7 @@ class SearchKit extends Plugin
         parent::init();
 
         $this->registerContentSync();
+        $this->registerTwigVariable();
 
         // Permissions and CP routes need services Craft has not finished building yet.
         Craft::$app->onInit(function() {
@@ -101,6 +107,15 @@ class SearchKit extends Plugin
 
         Event::on(Elements::class, Elements::EVENT_AFTER_RESTORE_ELEMENT, function(ElementEvent $event) {
             $this->getIndexing()->handleElementRestore($event->element);
+        });
+    }
+
+    private function registerTwigVariable(): void
+    {
+        Event::on(CraftVariable::class, CraftVariable::EVENT_INIT, function(Event $event) {
+            /** @var CraftVariable $variable */
+            $variable = $event->sender;
+            $variable->set('searchKit', SearchKitVariable::class);
         });
     }
 
@@ -145,6 +160,11 @@ class SearchKit extends Plugin
     public function getDocuments(): Documents
     {
         return $this->get('documents');
+    }
+
+    public function getHighlighting(): Highlighting
+    {
+        return $this->get('highlighting');
     }
 
     public function getIndexOperations(): IndexOperations

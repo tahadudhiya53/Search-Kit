@@ -4,12 +4,13 @@ Search management and intelligence for Craft CMS.
 
 ## Status
 
-**Early development.** SearchKit can run searches and keep indexes in step with Craft content. It
-provides search providers behind a single interface, provider-independent query, result and
-document objects, database-backed search indexes and searchable field configuration, a search
-service that runs a query through an index's provider, and queue-backed indexing that follows every
-content change. Indexes are managed from the control panel or from PHP. A provider backed by
-Craft's own search index ships with it.
+**Early development.** SearchKit can run searches from PHP and Twig, and keep indexes in step with
+Craft content. It provides search providers behind a single interface, provider-independent query,
+result and document objects, database-backed search indexes and searchable field configuration, a
+search service that runs a query through an index's provider, filtering, sorting, pagination,
+snippets and highlighting, and queue-backed indexing that follows every content change. Indexes are
+managed from the control panel or from PHP. A provider backed by Craft's own search index ships
+with it.
 
 See [Limitations](#limitations) for what is not there yet.
 
@@ -36,7 +37,7 @@ use Tahadudhiya\SearchKit\SearchKit;
 use Tahadudhiya\SearchKit\models\SearchQuery;
 
 $result = SearchKit::getInstance()->getSearch()->search(
-    SearchQuery::make('winter boots', 'siteSearch'),
+    SearchQuery::create('siteSearch', 'winter boots', ['limit' => 10]),
 );
 ```
 
@@ -45,8 +46,12 @@ $result = SearchKit::getInstance()->getSearch()->search(
 The bundled provider searches Craft's own search index, so SearchKit works without any external
 service. Craft scores results itself, which sets real limits on what this provider can honour:
 
-- It declares only the `Search` and `Indexing` capabilities. A query using filters or a custom sort
-  is rejected rather than quietly run without them.
+- It searches, indexes, filters and sorts, using Craft's own element query criteria, field
+  conditions and sort options. It cannot weight fields or highlight, so a query asking for either
+  is rejected rather than quietly run without it — highlighting is instead worked out by SearchKit
+  itself, as described under [Snippets and highlighting](#snippets-and-highlighting).
+- **A score is only reported when results are ranked by relevance.** Craft works one out while
+  ordering by `score`; order by anything else and every hit's score is `0`.
 - **Searchable fields do not narrow what it searches.** It uses their element types to decide which
   element types to query, and their handles to tell Craft which custom fields to index — but a
   search still matches anything Craft has indexed for those elements. Craft's search API offers no
@@ -77,6 +82,159 @@ An index declares the sites it covers, and a query may narrow that scope but nev
 
 There is no current-site fallback: an index is explicit about its own scope. The same scope applies
 when indexing — an index refuses an element belonging to a site it does not cover.
+
+## Searching
+
+From a template, `craft.searchKit` is the whole public API:
+
+```twig
+{% set q = craft.app.request.getParam('q') %}
+{% set results = craft.searchKit.search('siteSearch', q, {
+    limit: 10,
+    page: craft.app.request.getParam('page') ?: 1,
+    highlight: true,
+}) %}
+
+{% for hit in results.hits %}
+    <a href="{{ hit.element.url }}">{{ hit.element.title }}</a>
+    <p>{{ hit.highlight }}</p>
+{% endfor %}
+
+{% if results.hasNextPage %}<a href="?q={{ q }}&page={{ results.nextPage }}">Next</a>{% endif %}
+```
+
+The same parameters build a query in PHP, which the search service then runs:
+
+```php
+$query = SearchQuery::create('siteSearch', 'winter boots', ['limit' => 10]);
+$result = SearchKit::getInstance()->getSearch()->search($query);
+```
+
+| Parameter | Type | What it does |
+|---|---|---|
+| `limit` | whole number | Hits per page. Defaults to 20, and may not exceed 1000. |
+| `offset` / `page` | whole number | Where in the results to start. `page` is worked out from `limit`. |
+| `site` | handle, ID or `Site` | May narrow the index's scope, never widen it. |
+| `status` | string | An element status, such as `live` or `disabled`. Craft's own default applies otherwise. |
+| `filters` | array | Constraints on what may match — see below. |
+| `orderBy` | string or array | `'title asc'`, `'score desc, title asc'` or `{ title: 'asc' }`. Defaults to relevance. |
+| `highlight` | boolean | Whether to work out matched fields, snippets and highlights. Off by default. |
+| `snippetLength` | whole number | Roughly how long a snippet may run. Defaults to 200 characters. |
+
+Types are checked rather than coerced. A whole number may be given as a number or as the string form
+of one, since that is how request parameters arrive — `'2'` is a page number, while `'2.5'`, `2.5`,
+`true` and `[]` are mistakes and say so. `highlight` takes only `true` or `false`: `'false'` and `1`
+each have two plausible readings, and PHP's own answer is not the one a template would expect.
+`status` takes a non-empty string, and a status no element type in the index has is refused rather
+than quietly matching nothing.
+
+Anything else is rejected, as is a blank query, a filter value that is empty or cannot be compared,
+an unknown operator and a limit beyond the maximum. Invalid input raises an exception rather than
+returning something that looks like an empty result.
+
+### What a search may return
+
+Search covers published content. What counts as published is Craft's own answer: the status an
+unrestricted query of each element type returns.
+
+| Element type | Published status |
+|---|---|
+| Entries | `live` — enabled, posted, and not expired |
+| Categories, assets, users | `enabled` |
+
+- With no `status`, that is exactly what you get. Drafts and revisions are never searched.
+- **`enabled` is not a public status for entries.** Craft's `enabled` means only that the entry is
+  switched on, so it also covers entries scheduled for the future and entries that have expired.
+  Asking for it is asking for unpublished content.
+- Any status other than the published one — `enabled`, `disabled`, `pending`, `expired`, `archived`
+  — requires a signed-in administrator. Everyone else is refused outright, in a request or out of
+  one. Code running in the console or a queue job can search unpublished content by signing an
+  administrator in first, as Craft's own tooling does.
+- For an unpublished search, every result is still put to Craft's `Elements::canView()`. If the site
+  refuses even one of them, the search is refused rather than answered: dropping a result would
+  leave the total describing a different set of results from the one returned.
+- Every hit names the site it was found in, and its element is always loaded from that site. A
+  result a provider cannot place in a site the search covered is refused rather than guessed at, so
+  a search can never widen its own scope.
+- An element that cannot be loaded in the site and status that were searched is dropped, so a hit
+  never comes back as an identifier with nothing behind it. That only happens when a provider's
+  index has fallen behind Craft, and the total drops with it.
+
+SearchKit adds no permissions of its own for searching: it asks Craft. The control panel permissions
+govern only index management.
+
+### Filters
+
+A filter is a field, an operator and a value. Templates can leave the operator out:
+
+```twig
+{% set results = craft.searchKit.search('siteSearch', q, {
+    filters: {
+        elementType: 'entry',            {# any of: eq #}
+        section: ['news', 'blog'],       {# a list means any of them: in #}
+        postDate: { gte: '2024-01-01' }, {# eq, neq, in, notIn, gt, gte, lt, lte #}
+    },
+}) %}
+```
+
+Operators are `eq`, `neq`, `in`, `notIn`, `gt`, `gte`, `lt` and `lte`. A value must be a string,
+number, boolean or date; `in` and `notIn` need a non-empty list; the four comparisons need something
+with an order to it. Null is rejected, because a provider would quietly ignore it. There is no
+“contains” operator — matching text is what the search itself does.
+
+What may be filtered on is decided by the provider. The Craft provider accepts:
+
+- `elementType`, taking Craft's reference handles (`entry`, `category`, `asset`, `user`) or class
+  names, and narrowing an index only to element types it already covers.
+- The element criteria Craft itself exposes: `id`, `uid`, `title`, `slug`, `uri`, `level`,
+  `section`, `sectionId`, `type`, `typeId`, `authorId`, `group`, `groupId`, `volume`, `volumeId`,
+  `folderId` and `kind`.
+- Any custom field the index is configured to search, as long as that field is on one of the
+  element type's own field layouts. The filter becomes Craft's own condition for that field type,
+  so it behaves exactly as the same parameter would on an element query.
+
+Nothing else reaches the query builder. A field no element type in the index can be asked about is
+rejected, a filter that rules an element type out removes it from the search, and a field type Craft
+stores no queryable value for — a Matrix field, for instance — is rejected rather than quietly
+matching nothing. One field may only be filtered on once.
+
+### Sorting
+
+`orderBy` is provider-independent: `score` means whatever relevance the provider reports, and any
+other field is checked against what the provider can sort by. For the Craft provider that is Craft's
+own sort options for the element type, so nothing a caller passes is ever used as SQL, and orderings
+Craft builds itself — an entry's post date, for instance — are used as Craft builds them.
+
+Craft can only order one element type's query at a time, so a search covering several of them is put
+in order afterwards, by comparing the attribute each hit carries. Only a sort that is a plain
+attribute on every element type involved can be honoured that way: anything else is rejected with an
+explanation rather than applied to part of the results. Equal values are broken by element ID, so a
+page is never ordered arbitrarily.
+
+### Pagination
+
+A result reports `total`, `limit`, `offset`, `page`, `pageCount`, `hasNextPage`, `hasPreviousPage`,
+`nextPage` and `previousPage`, plus `count` for the hits on this page.
+
+`hasNextPage` and `hasPreviousPage` describe the window itself — whether there are results after or
+before it — while `page` and `pageCount` count whole pages, so they line up exactly when `offset` is
+a multiple of `limit`. Every page of one search reports the same `total`, because what a search may
+return is decided before it runs rather than by dropping results from a page. On an all-site index each site's copy of an element is its own result, since
+each one is a separate thing to link to.
+
+`provider`, `metadata` and a hit's `providerData` are diagnostics: they report what happened to run
+the search, and are not part of the stable result contract.
+
+### Snippets and highlighting
+
+With `highlight: true`, each hit reports the fields it matched on, a plain-text `snippet` cut around
+the first match, and a `highlight` — the same excerpt with matched terms wrapped in `<mark>`. Both
+are also available per field: `hit.getSnippet('body')`.
+
+Excerpts come from the values the index is configured to search, so they work whatever is serving
+the index; a provider that highlights for itself keeps its own answer. Text is escaped before the
+marks go in, so `{{ hit.highlight }}` needs no `|raw` and indexed content cannot carry markup into a
+page. It is off by default because it reads each hit's content.
 
 ## Indexing
 
@@ -208,11 +366,11 @@ php craft search-kit/index/retry <handle>    # put failed operations back in the
 These do not exist yet. They are the intended direction of the plugin, not a description of what it
 currently does.
 
-- No Twig integration; searches run from PHP.
 - Only entries, categories, assets and users are offered as indexable element types.
 - Only the Craft provider ships, with the constraints described above — including that it shares
   Craft's single search index rather than giving each SearchKit index its own store.
 - A rebuild is never started automatically after a configuration change; it is reported as owed.
+- No faceting, fuzzy matching, typo tolerance, synonyms or autocomplete.
 - No search rules, merchandising, analytics, or debugger.
 
 ## Local development
