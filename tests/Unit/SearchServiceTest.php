@@ -56,7 +56,7 @@ class SearchServiceTest extends TestCase
     public function testRejectsAnInvalidQueryBeforeTouchingTheProvider(): void
     {
         try {
-            $this->search->search(SearchQuery::make('  ', 'siteSearch'));
+            $this->search->search(SearchQuery::create('siteSearch', '  '));
             self::fail('An invalid query should not reach the provider.');
         } catch (InvalidQueryException $e) {
             self::assertArrayHasKey('text', $e->getErrors());
@@ -68,7 +68,7 @@ class SearchServiceTest extends TestCase
     public function testThrowsWhenTheIndexDoesNotExist(): void
     {
         $this->expectException(IndexNotFoundException::class);
-        $this->search->search(SearchQuery::make('boots', 'missing'));
+        $this->search->search(SearchQuery::create('missing', 'boots'));
     }
 
     public function testThrowsWhenTheIndexIsDisabled(): void
@@ -76,12 +76,12 @@ class SearchServiceTest extends TestCase
         $this->index->enabled = false;
 
         $this->expectException(IndexDisabledException::class);
-        $this->search->search(SearchQuery::make('boots', 'siteSearch'));
+        $this->search->search(SearchQuery::create('siteSearch', 'boots'));
     }
 
     public function testRejectsFiltersTheProviderCannotHonour(): void
     {
-        $query = SearchQuery::make('boots', 'siteSearch')
+        $query = SearchQuery::create('siteSearch', 'boots')
             ->addFilter(SearchFilter::make('sectionId', FilterOperator::Equals, 3));
 
         $this->expectException(UnsupportedCapabilityException::class);
@@ -92,7 +92,7 @@ class SearchServiceTest extends TestCase
     {
         $this->provider->supported = [ProviderCapability::Search, ProviderCapability::Filtering];
 
-        $query = SearchQuery::make('boots', 'siteSearch')
+        $query = SearchQuery::create('siteSearch', 'boots')
             ->addFilter(SearchFilter::make('sectionId', FilterOperator::Equals, 3));
 
         $this->search->search($query);
@@ -102,7 +102,7 @@ class SearchServiceTest extends TestCase
 
     public function testNormalizesTheResultAndReportsExecutionDetail(): void
     {
-        $result = $this->search->search(SearchQuery::make('boots', 'siteSearch'));
+        $result = $this->search->search(SearchQuery::create('siteSearch', 'boots'));
 
         self::assertSame('siteSearch', $result->indexHandle);
         self::assertSame(StubProvider::class, $result->provider);
@@ -111,7 +111,7 @@ class SearchServiceTest extends TestCase
 
     public function testLeavesTheSiteUnresolvedSoTheIndexScopeApplies(): void
     {
-        $this->search->search(SearchQuery::make('boots', 'siteSearch'));
+        $this->search->search(SearchQuery::create('siteSearch', 'boots'));
 
         self::assertNull($this->provider->receivedQuery?->siteId);
     }
@@ -121,7 +121,7 @@ class SearchServiceTest extends TestCase
 
     public function testNormalizesPaginationOntoTheResult(): void
     {
-        $query = SearchQuery::make('boots', 'siteSearch');
+        $query = SearchQuery::create('siteSearch', 'boots');
         $query->limit = 5;
         $query->offset = 10;
 
@@ -136,7 +136,7 @@ class SearchServiceTest extends TestCase
         $this->provider->failWith = new RuntimeException('SQLSTATE[HY000] dsn=mysql://root:hunter2@db');
 
         try {
-            $this->search->search(SearchQuery::make('boots', 'siteSearch'));
+            $this->search->search(SearchQuery::create('siteSearch', 'boots'));
             self::fail('A provider failure should surface as a SearchKit exception.');
         } catch (ProviderException $e) {
             self::assertStringNotContainsString('hunter2', $e->getMessage());
@@ -155,7 +155,7 @@ class SearchServiceTest extends TestCase
             $observed[] = $event->query->getNormalizedText();
         });
 
-        $this->search->search(SearchQuery::make('winter  boots', 'siteSearch'));
+        $this->search->search(SearchQuery::create('siteSearch', 'winter  boots'));
 
         self::assertSame(['winter boots'], $observed);
     }
