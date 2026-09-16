@@ -13,6 +13,10 @@ use Tahadudhiya\SearchKit\db\Table;
  * @property bool $enabled
  * @property string|null $settings
  * @property int|null $siteId
+ * @property string|null $dateLastIndexed
+ * @property int $configurationVersion
+ * @property bool $rebuildRequired
+ * @property bool $rebuildPending
  */
 class SearchIndexRecord extends ActiveRecord
 {
