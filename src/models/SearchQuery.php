@@ -40,6 +40,16 @@ class SearchQuery extends Model
     /** @var SearchSort[] */
     private array $_sorts = [];
 
+    /** @var ParsedQuery|null What the pipeline made of the text, once it has run. */
+    private ?ParsedQuery $_parsed = null;
+
+    /**
+     * @var array<string,array{elementId:int,siteId:int|null}> Results the search must leave out. A
+     * null site means every site; an integer means that site alone, so a removal in one site cannot
+     * reach another. Set by SearchKit itself, never by a caller.
+     */
+    private array $_excluded = [];
+
     /**
      * The one way to build a query. Every parameter is vetted here, so nothing a caller passes —
      * a template above all — reaches a provider unchecked.
@@ -96,15 +106,71 @@ class SearchQuery extends Model
     }
 
     /**
+     * What the query pipeline made of the text: the terms, and everything the operators, stop words
+     * and synonyms decided about them. A query that has not been through the pipeline reads as one
+     * plain term per word, so a provider can always ask.
+     */
+    public function getParsedQuery(): ParsedQuery
+    {
+        if ($this->_parsed !== null) {
+            return $this->_parsed;
+        }
+
+        $parsed = new ParsedQuery([
+            'raw' => $this->text,
+            'normalized' => $this->getNormalizedText(),
+        ]);
+
+        $parsed->setTerms(array_map(
+            static fn(string $word) => QueryTerm::make($word),
+            $this->words(),
+        ));
+
+        return $parsed;
+    }
+
+    public function setParsedQuery(?ParsedQuery $parsed): static
+    {
+        $this->_parsed = $parsed;
+        return $this;
+    }
+
+    /**
+     * Results this search must not return, whatever their rank. This is not a search parameter: it
+     * is how SearchKit expresses a removal to a provider, so it never reaches `configure()`.
+     *
+     * @return array<int,array{elementId:int,siteId:int|null}>
+     */
+    public function getExcludedElements(): array
+    {
+        return array_values($this->_excluded);
+    }
+
+    public function excludeElement(int $elementId, ?int $siteId = null): static
+    {
+        $this->_excluded[$elementId . ':' . ($siteId ?? '*')] = ['elementId' => $elementId, 'siteId' => $siteId];
+
+        return $this;
+    }
+
+    /**
      * The query text reduced to the terms a match can be explained by.
      *
      * @return string[]
      */
     public function getTokens(): array
     {
-        $tokens = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($this->getNormalizedText()), -1, PREG_SPLIT_NO_EMPTY);
+        return $this->getParsedQuery()->getTokens();
+    }
 
-        return array_values(array_unique($tokens ?: []));
+    /**
+     * @return string[]
+     */
+    private function words(): array
+    {
+        $words = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($this->getNormalizedText()), -1, PREG_SPLIT_NO_EMPTY);
+
+        return array_values(array_unique($words ?: []));
     }
 
     /**
@@ -122,6 +188,17 @@ class SearchQuery extends Model
     {
         $this->_filters = array_values($this->onlyInstancesOf($filters, SearchFilter::class, 'filter'));
         return $this;
+    }
+
+    public function hasFilterOn(string $field): bool
+    {
+        foreach ($this->_filters as $filter) {
+            if ($filter->field === $field) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function addFilter(SearchFilter $filter): static

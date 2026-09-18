@@ -15,6 +15,47 @@ class SchemaTest extends IntegrationTestCase
         self::assertNotEmpty($this->tableSchema(Table::INDEXES)->columns);
         self::assertNotEmpty($this->tableSchema(Table::SEARCHABLEFIELDS)->columns);
         self::assertNotEmpty($this->tableSchema(Table::INDEXOPERATIONS)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::SYNONYMS)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::TERMS)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::RULES)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::RULEACTIONS)->columns);
+    }
+
+    public function testRuleTablesHaveTheExpectedColumns(): void
+    {
+        $rules = $this->tableSchema(Table::RULES);
+
+        self::assertEqualsCanonicalizing(
+            [
+                'id', 'indexId', 'siteId', 'name', 'enabled', 'priority', 'matchType', 'matchValue',
+                'dateStart', 'dateEnd', 'dateCreated', 'dateUpdated', 'uid',
+            ],
+            array_keys($rules->columns),
+        );
+
+        // A rule always governs one index; a null site is what makes it apply in every one of them.
+        self::assertFalse($rules->columns['indexId']->allowNull);
+        self::assertTrue($rules->columns['siteId']->allowNull);
+        self::assertTrue($rules->columns['dateStart']->allowNull);
+        self::assertTrue($rules->columns['dateEnd']->allowNull);
+
+        $actions = $this->tableSchema(Table::RULEACTIONS);
+
+        self::assertEqualsCanonicalizing(
+            [
+                'id', 'ruleId', 'type', 'elementId', 'elementType', 'siteId', 'amount', 'position',
+                'value', 'sortOrder', 'dateCreated', 'dateUpdated', 'uid',
+            ],
+            array_keys($actions->columns),
+        );
+
+        // One table for every kind of control, so a redirect carries no element and a pin no value.
+        self::assertFalse($actions->columns['ruleId']->allowNull);
+        self::assertTrue($actions->columns['elementId']->allowNull);
+        self::assertTrue($actions->columns['position']->allowNull);
+        // Null means every site the rule covers; a placed result always names one.
+        self::assertTrue($actions->columns['siteId']->allowNull);
+        self::assertTrue($actions->columns['value']->allowNull);
     }
 
     public function testIndexesTableHasTheExpectedColumns(): void
@@ -24,7 +65,7 @@ class SchemaTest extends IntegrationTestCase
         self::assertSame(['id'], $schema->primaryKey);
         self::assertEqualsCanonicalizing(
             [
-                'id', 'name', 'handle', 'provider', 'enabled', 'settings', 'siteId',
+                'id', 'name', 'handle', 'provider', 'enabled', 'settings', 'searchSettings', 'siteId',
                 'dateLastIndexed', 'configurationVersion', 'rebuildRequired', 'rebuildPending',
                 'dateCreated', 'dateUpdated', 'uid',
             ],
@@ -35,6 +76,7 @@ class SchemaTest extends IntegrationTestCase
         self::assertFalse($schema->columns['provider']->allowNull);
         self::assertTrue($schema->columns['siteId']->allowNull);
         self::assertTrue($schema->columns['settings']->allowNull);
+        self::assertTrue($schema->columns['searchSettings']->allowNull);
         self::assertTrue($schema->columns['dateLastIndexed']->allowNull);
         self::assertFalse($schema->columns['rebuildRequired']->allowNull);
         self::assertFalse($schema->columns['rebuildPending']->allowNull);
@@ -78,6 +120,43 @@ class SchemaTest extends IntegrationTestCase
         self::assertFalse($schema->columns['weight']->allowNull);
     }
 
+    public function testSynonymsTableHasTheExpectedColumns(): void
+    {
+        $schema = $this->tableSchema(Table::SYNONYMS);
+
+        self::assertSame(['id'], $schema->primaryKey);
+        self::assertEqualsCanonicalizing(
+            [
+                'id', 'indexId', 'siteId', 'type', 'terms', 'replacements', 'enabled', 'sortOrder',
+                'dateCreated', 'dateUpdated', 'uid',
+            ],
+            array_keys($schema->columns),
+        );
+
+        // A null index or site is what makes a group govern every one of them.
+        self::assertTrue($schema->columns['indexId']->allowNull);
+        self::assertTrue($schema->columns['siteId']->allowNull);
+        self::assertFalse($schema->columns['terms']->allowNull);
+        self::assertTrue($schema->columns['replacements']->allowNull);
+    }
+
+    public function testTermsTableHasTheExpectedColumns(): void
+    {
+        $schema = $this->tableSchema(Table::TERMS);
+
+        self::assertSame(['id'], $schema->primaryKey);
+        self::assertEqualsCanonicalizing(
+            ['id', 'indexId', 'elementId', 'siteId', 'elementType', 'term', 'dateCreated'],
+            array_keys($schema->columns),
+        );
+
+        self::assertFalse($schema->columns['indexId']->allowNull);
+        self::assertFalse($schema->columns['elementId']->allowNull);
+        self::assertFalse($schema->columns['siteId']->allowNull);
+        self::assertFalse($schema->columns['elementType']->allowNull);
+        self::assertFalse($schema->columns['term']->allowNull);
+    }
+
     public function testHandleIsUniqueAndFieldsAreUniquePerIndexAndElementType(): void
     {
         self::assertContains(['handle'], $this->uniqueIndexes(Table::INDEXES));
@@ -90,6 +169,12 @@ class SchemaTest extends IntegrationTestCase
         self::assertContains(
             ['indexId', 'elementId', 'siteId'],
             array_map(static fn(array $columns) => array_values($columns), $this->uniqueIndexes(Table::INDEXOPERATIONS)),
+        );
+
+        // One row per word per document, which is what lets a word outlive one document but not all.
+        self::assertContains(
+            ['indexId', 'elementId', 'siteId', 'term'],
+            array_map(static fn(array $columns) => array_values($columns), $this->uniqueIndexes(Table::TERMS)),
         );
     }
 
@@ -108,6 +193,38 @@ class SchemaTest extends IntegrationTestCase
         self::assertSame(
             [Craft::$app->getDb()->getSchema()->getRawTableName(Table::INDEXES), 'indexId' => 'id'],
             $this->foreignKeyFor(Table::INDEXOPERATIONS, 'indexId'),
+        );
+
+        self::assertSame(
+            [Craft::$app->getDb()->getSchema()->getRawTableName(Table::INDEXES), 'indexId' => 'id'],
+            $this->foreignKeyFor(Table::SYNONYMS, 'indexId'),
+        );
+
+        self::assertSame(
+            [Craft::$app->getDb()->getSchema()->getRawTableName(Table::INDEXES), 'indexId' => 'id'],
+            $this->foreignKeyFor(Table::TERMS, 'indexId'),
+        );
+
+        // A word cannot outlive the element it was read from, however the element goes away.
+        self::assertSame(
+            ['elements', 'elementId' => 'id'],
+            $this->foreignKeyFor(Table::TERMS, 'elementId'),
+        );
+
+        self::assertSame(
+            [Craft::$app->getDb()->getSchema()->getRawTableName(Table::INDEXES), 'indexId' => 'id'],
+            $this->foreignKeyFor(Table::RULES, 'indexId'),
+        );
+
+        self::assertSame(
+            [Craft::$app->getDb()->getSchema()->getRawTableName(Table::RULES), 'ruleId' => 'id'],
+            $this->foreignKeyFor(Table::RULEACTIONS, 'ruleId'),
+        );
+
+        // An action naming a deleted element has nothing left to do, so it goes with it.
+        self::assertSame(
+            ['elements', 'elementId' => 'id'],
+            $this->foreignKeyFor(Table::RULEACTIONS, 'elementId'),
         );
 
         // Deliberately none: a deletion operation has to outlive the element it removes.

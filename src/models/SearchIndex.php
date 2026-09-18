@@ -52,6 +52,24 @@ class SearchIndex extends Model
     /** @var SearchableField[]|null Hydrated on demand by the service that resolves the index. */
     private ?array $_fields = null;
 
+    /** @var SearchSettings|null How this index treats the text it is searched with. */
+    private ?SearchSettings $_searchSettings = null;
+
+    public function getSearchSettings(): SearchSettings
+    {
+        return $this->_searchSettings ??= new SearchSettings();
+    }
+
+    /**
+     * @param SearchSettings|array<string,mixed> $settings
+     */
+    public function setSearchSettings(SearchSettings|array $settings): void
+    {
+        $this->_searchSettings = $settings instanceof SearchSettings
+            ? $settings
+            : SearchSettings::fromConfig($settings);
+    }
+
     public function coversAllSites(): bool
     {
         return $this->siteId === null;
@@ -133,6 +151,20 @@ class SearchIndex extends Model
             [['provider'], 'validateProvider'],
             [['siteId', 'id'], 'integer', 'min' => 1],
         ];
+    }
+
+    /**
+     * Search behaviour is a model of its own, so it is validated alongside the index it belongs to.
+     */
+    public function afterValidate(): void
+    {
+        if (!$this->getSearchSettings()->validate()) {
+            foreach ($this->getSearchSettings()->getErrorSummary(true) as $error) {
+                $this->addError('searchSettings', $error);
+            }
+        }
+
+        parent::afterValidate();
     }
 
     public function validateProvider(string $attribute): void

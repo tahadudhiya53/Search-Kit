@@ -35,8 +35,8 @@ class Indexes extends Component
     {
         if ($this->_indexes === null) {
             $rows = (new Query())
-                ->select(['id', 'name', 'handle', 'provider', 'enabled', 'settings', 'siteId', 'dateLastIndexed', 'configurationVersion',
-                    'rebuildRequired', 'rebuildPending', 'uid', ])
+                ->select(['id', 'name', 'handle', 'provider', 'enabled', 'settings', 'searchSettings', 'siteId',
+                    'dateLastIndexed', 'configurationVersion', 'rebuildRequired', 'rebuildPending', 'uid', ])
                 ->from([Table::INDEXES])
                 ->orderBy(['name' => SORT_ASC])
                 ->all();
@@ -136,6 +136,12 @@ class Indexes extends Component
             return false;
         }
 
+        // A new row's generation comes from the column default, which the record only knows about
+        // once it is asked. Without this a new index would report a generation it is not on.
+        if ($record->getIsNewRecord()) {
+            $record->loadDefaultValues();
+        }
+
         if ($this->handleIsTaken($index)) {
             $index->addError('handle', "The handle “{$index->handle}” is already in use.");
             return false;
@@ -162,6 +168,7 @@ class Indexes extends Component
         $record->provider = $index->provider;
         $record->enabled = $index->enabled;
         $record->settings = $index->settings !== [] ? Json::encode($index->settings) : null;
+        $record->searchSettings = Json::encode($index->getSearchSettings()->toConfig());
         $record->siteId = $index->siteId;
         $record->rebuildRequired = $index->rebuildRequired || $invalidated;
 
@@ -375,7 +382,7 @@ class Indexes extends Component
      */
     private function createIndexFromRow(array $row): SearchIndex
     {
-        return new SearchIndex([
+        $index = new SearchIndex([
             'id' => (int)$row['id'],
             'name' => (string)$row['name'],
             'handle' => (string)$row['handle'],
@@ -389,5 +396,11 @@ class Indexes extends Component
             'rebuildPending' => (bool)$row['rebuildPending'],
             'uid' => (string)$row['uid'],
         ]);
+
+        if ($row['searchSettings'] !== null) {
+            $index->setSearchSettings((array)Json::decodeIfJson($row['searchSettings']));
+        }
+
+        return $index;
     }
 }

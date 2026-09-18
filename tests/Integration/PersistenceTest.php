@@ -6,6 +6,7 @@ use Craft;
 use craft\db\Query;
 use craft\elements\Entry;
 use Tahadudhiya\SearchKit\db\Table;
+use Tahadudhiya\SearchKit\enums\PartialMatchMode;
 use Tahadudhiya\SearchKit\models\SearchableField;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\providers\CraftProvider;
@@ -40,6 +41,55 @@ class PersistenceTest extends IntegrationTestCase
         self::assertSame(['pageSize' => 25, 'nested' => ['a' => 1]], $read->settings);
         self::assertSame(Craft::$app->getSites()->getPrimarySite()->id, $read->siteId);
         self::assertSame($index->uid, $read->uid);
+    }
+
+    public function testANewIndexReportsTheGenerationItIsActuallyOn(): void
+    {
+        $index = $this->persistIndex($this->newIndex());
+
+        // A rebuild may only settle the generation it started against, so a model that disagreed
+        // with the database could never report itself as current.
+        self::assertSame(
+            $this->freshIndexes()->getIndexByHandle($index->handle)?->configurationVersion,
+            $index->configurationVersion,
+        );
+        self::assertTrue($this->plugin()->getIndexes()->markRebuildComplete($index, $index->configurationVersion));
+    }
+
+    public function testSearchBehaviourRoundTripsWithTheIndex(): void
+    {
+        $index = $this->newIndex();
+        $index->getSearchSettings()->partialMatching = PartialMatchMode::Substring;
+        $index->getSearchSettings()->customStopWords = ['shop'];
+        $index->getSearchSettings()->typoTolerance = false;
+        $this->persistIndex($index);
+
+        $read = $this->freshIndexes()->getIndexByHandle($index->handle);
+
+        self::assertNotNull($read);
+        self::assertSame(PartialMatchMode::Substring, $read->getSearchSettings()->partialMatching);
+        self::assertSame(['shop'], $read->getSearchSettings()->customStopWords);
+        self::assertFalse($read->getSearchSettings()->typoTolerance);
+    }
+
+    public function testChangingSearchBehaviourDoesNotCostARebuild(): void
+    {
+        $index = $this->markCurrent($this->persistIndex($this->newIndex()));
+
+        $index->getSearchSettings()->partialMatching = PartialMatchMode::Off;
+        self::assertTrue($this->plugin()->getIndexes()->saveIndex($index));
+
+        // Behaviour decides how a query is read, not what the provider was given to hold.
+        self::assertFalse($this->freshIndexes()->getIndexByHandle($index->handle)?->rebuildRequired);
+    }
+
+    public function testRejectsSearchBehaviourThatWouldNotWork(): void
+    {
+        $index = $this->newIndex();
+        $index->getSearchSettings()->typoMaxDistance = 9;
+
+        self::assertFalse($this->plugin()->getIndexes()->saveIndex($index));
+        self::assertArrayHasKey('searchSettings', $index->getErrors());
     }
 
     public function testAnAllSiteIndexStoresANullSite(): void

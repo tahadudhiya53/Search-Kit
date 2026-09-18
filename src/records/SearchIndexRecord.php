@@ -12,6 +12,7 @@ use Tahadudhiya\SearchKit\db\Table;
  * @property string $provider
  * @property bool $enabled
  * @property string|null $settings
+ * @property string|null $searchSettings
  * @property int|null $siteId
  * @property string|null $dateLastIndexed
  * @property int $configurationVersion
