@@ -19,6 +19,12 @@ use yii\base\InvalidConfigException;
  */
 class Highlighting extends Component
 {
+    /** @var int Excerpts shown per field, so a long value is not judged by its first match alone. */
+    private const MAX_WINDOWS = 3;
+
+    /** @var int Less text than this around a match reads as fragments rather than as a sentence. */
+    private const MIN_WINDOW = 60;
+
     private ?Documents $_documents = null;
 
     /**
@@ -81,7 +87,7 @@ class Highlighting extends Component
     }
 
     /**
-     * An excerpt of the value around its first matched term, as plain text and with the matches
+     * An excerpt of the value around the terms it matched, as plain text and with the matches
      * marked. Returns null when the value does not contain any of the terms.
      *
      * @param string[] $tokens
@@ -96,11 +102,11 @@ class Highlighting extends Component
         }
 
         foreach ($this->patterns($tokens) as $pattern) {
-            if (!preg_match($pattern, $text, $match, PREG_OFFSET_CAPTURE)) {
+            if (!preg_match_all($pattern, $text, $matches, PREG_OFFSET_CAPTURE)) {
                 continue;
             }
 
-            $snippet = $this->window($text, mb_strlen(substr($text, 0, (int)$match[0][1])), $length);
+            $snippet = $this->windows($text, $this->characterOffsets($text, $matches[0]), $length);
 
             return [
                 'snippet' => $snippet,
@@ -137,6 +143,9 @@ class Highlighting extends Component
             return [];
         }
 
+        // Longest first, so a phrase is marked as one rather than word by word.
+        usort($quoted, static fn(string $a, string $b) => mb_strlen($b) <=> mb_strlen($a));
+
         $terms = implode('|', $quoted);
 
         return [
@@ -146,26 +155,84 @@ class Highlighting extends Component
     }
 
     /**
-     * A window of the text around the match, cut at word boundaries rather than mid-word.
+     * Matches are reported in bytes, and an excerpt is cut in characters.
+     *
+     * @param array<array{string,int}> $matches
+     * @return int[]
      */
-    private function window(string $text, int $matchOffset, int $length): string
+    private function characterOffsets(string $text, array $matches): array
     {
-        if (mb_strlen($text) <= $length) {
+        return array_map(
+            static fn(array $match) => mb_strlen(substr($text, 0, (int)$match[1])),
+            $matches,
+        );
+    }
+
+    /**
+     * The text around the matches, cut at word boundaries. A value long enough to hold several
+     * matches shows more than the first one, so a snippet reflects why the whole value matched.
+     *
+     * @param int[] $offsets Where each match starts, in characters, in the order they appear.
+     */
+    private function windows(string $text, array $offsets, int $length): string
+    {
+        $total = mb_strlen($text);
+
+        if ($total <= $length || $offsets === []) {
             return $text;
         }
 
-        $start = max(0, $matchOffset - (int)floor($length / 3));
-        $window = mb_substr($text, $start, $length);
+        $count = max(1, min(self::MAX_WINDOWS, intdiv($length, self::MIN_WINDOW)));
+        $size = max(self::MIN_WINDOW, intdiv($length, $count));
+        $parts = [];
+        $covered = 0;
+        $leading = false;
 
-        if ($start > 0 && ($space = mb_strpos($window, ' ')) !== false) {
-            $window = mb_substr($window, $space + 1);
+        foreach ($offsets as $offset) {
+            if (count($parts) >= $count) {
+                break;
+            }
+
+            // A match already inside the text taken so far is shown by it.
+            if ($offset < $covered) {
+                continue;
+            }
+
+            $start = max($covered, $offset - intdiv($size, 3));
+            $end = min($total, $start + $size);
+            $window = mb_substr($text, $start, $end - $start);
+
+            if ($start > 0) {
+                $window = $this->fromWordBoundary($window);
+                $leading = $leading || $parts === [];
+            }
+
+            if ($end < $total) {
+                $window = $this->toWordBoundary($window);
+            }
+
+            $parts[] = $window;
+            $covered = $end;
         }
 
-        if ($start + $length < mb_strlen($text) && ($space = mb_strrpos($window, ' ')) !== false) {
-            $window = mb_substr($window, 0, $space);
-        }
+        return ($leading ? '…' : '') . implode(' … ', $parts) . ($covered < $total ? '…' : '');
+    }
 
-        return ($start > 0 ? '…' : '') . $window . ($start + $length < mb_strlen($text) ? '…' : '');
+    /**
+     * Drops the part of a word the window opened in the middle of.
+     */
+    private function fromWordBoundary(string $window): string
+    {
+        $space = mb_strpos($window, ' ');
+
+        return $space !== false ? mb_substr($window, $space + 1) : $window;
+    }
+
+    private function toWordBoundary(string $window): string
+    {
+        $space = mb_strrpos($window, ' ');
+
+        return $space !== false ? mb_substr($window, 0, $space) : $window;
     }
 
     /**
