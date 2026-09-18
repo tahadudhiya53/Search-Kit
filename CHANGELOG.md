@@ -67,4 +67,100 @@
 - Sorting a search that covers several element types is restricted to attributes every one of them
   carries, with ties broken by element ID; anything Craft can only order in SQL is rejected with an
   explanation instead of being applied to part of the results.
+- A query pipeline that settles everything query text means before a provider sees it: normalization,
+  operators, tokenization, stop words and synonyms, each in one place. Providers are handed terms
+  rather than search syntax, and a query is carried through as a structured set of terms that a
+  ranking explanation can later be built from.
+- Query normalization shared with indexing, using Craft's own keyword normalization, so what is
+  typed and what was indexed are reduced the same way.
+- Search operators: phrases, exclusions, alternation and wildcards, each expressed through Craft's
+  own search syntax rather than through SQL. Each side of an alternation keeps its own matching. A
+  provider that cannot honour an operator refuses the query instead of running a different search, a
+  query that only rules things out is rejected, and an exclusion combined with `OR` is refused
+  rather than quietly read as one of its two possible meanings.
+- Configurable partial matching per index, with a minimum term length, so a short word does not
+  match everything. Exclusions are always matched whole.
+- Stop words, with a built-in English list and per-index additions. A query made of nothing but
+  stop words is searched as written rather than emptied.
+- Database-backed synonyms: two-way groups whose terms stand in for each other, and one-way groups
+  that expand in one direction only. Each group covers one index or all of them, one site or all of
+  them, and its words are normalized on save the way indexed content is. Groups are cached, and a
+  save or delete is visible to the next search.
+- Typo tolerance: a search that found nothing is retried against the words the index holds, and the
+  result says what was searched for instead. An insertion, a deletion, a substitution or a swap of
+  two neighbouring characters each count as one edit, any character can be corrected including the
+  first, and every word close enough is weighed rather than an arbitrary sample of them. Correction
+  never runs on a search that found something, and a provider that tolerates typos itself is left
+  to do it.
+- Search suggestions and autocomplete, drawn from the words an index holds so nothing is ever
+  suggested that the index cannot find. A search that found nothing carries alternatives, and
+  autocomplete completes what has been typed without running a search.
+- A record of the words each index holds, one row per word per document, so a word disappears once
+  the last document using it stops using it and survives while any other still does. Updates,
+  deletions, restores and rebuilds all keep it in step, and indexing that failed changes nothing.
+- Suggestions describe published content only. Before a word is completed, corrected to or offered,
+  SearchKit checks that a document anybody may find still uses it, so nothing from a draft, a
+  disabled entry, one not yet posted, one expired or one deleted can be suggested to anyone. Every
+  document using a word is checked until one proves it may be shown, and completions and corrections
+  are read a batch at a time until enough of them may be shown, so no suggestion is lost to a fixed
+  sample of the content behind it.
+- Better snippets: a long value shows several excerpts rather than only its first match, phrases are
+  marked as one rather than word by word, and terms are marked as the pipeline made them, so a
+  correction or a synonym is marked where it matched.
+- Control panel management of synonyms, and of how queries against an index are read. Neither
+  changes what is indexed, so neither costs a rebuild. Search behaviour is validated rather than
+  coerced, so a value that cannot be read is reported instead of being saved as something else.
+- `craft.searchKit.autocomplete()` and `craft.searchKit.suggest()` in templates.
+- Search rules: deliberate control over what a particular query returns. A rule belongs to one index
+  and optionally to one site, is triggered by exact, contains, starts-with, ends-with or wildcard
+  query text, and can boost, bury, hide, pin, promote or redirect. Rule text is normalized the same
+  way query text is, and a pattern is a wildcard rather than a regular expression.
+- Deterministic rule priority: rules are applied highest priority first and oldest first within a
+  priority. Hiding, pinning and promoting are exclusive and the first rule to claim a result keeps
+  it, whatever any later rule asks for; boosts and buries accumulate, but only on results no rule
+  claimed. Two pins cannot share a position, and only the highest-priority redirect is offered.
+- Hidden, pinned and promoted results are left out of the search itself and the placed ones put back
+  at their own positions, so a hidden result can never appear on any page however far down it ranked,
+  a placed result appears and is counted exactly once, and totals describe the results a visitor can
+  actually reach. Providers declare whether they can leave results out, and one that cannot is
+  refused rather than hiding only what it happened to read.
+- The results a boost or a bury moves are held back from the ranked list and asked for by name, so a
+  boost lifts a result onto the first page however far down it ranked, at the score the search gave
+  it, and without adding a result the search never matched. Past the first 1000 results the
+  adjustment is recorded as skipped rather than applied to the wrong page, as it is when the search
+  supplies its own ordering.
+- Search rules are scoped by site: a rule naming a site only ever affects that site's results, even
+  on a search covering every site, and the same element in another site is left alone. Precedence is
+  settled per site, so a site rule that outranks a global one keeps its own site while the global
+  rule still governs the rest, and a rule for one site never blocks a rule for another. Pinning and
+  promoting need one site to place the result in and never fall back to the primary site.
+- Every rule target is checked when the rule is saved — it must exist, be a real element type, be a
+  type the rule's index searches, be reachable in the rule's site, and not be in the trash — so
+  nothing a control panel form posts is trusted.
+- What a placed result may show is settled every time a search runs, not when the rule was saved: a
+  pinned or promoted result is loaded under the search's own status and put to Craft's authorization
+  with every other result, so one that has since become disabled, unposted, expired, disabled for the
+  site, trashed or otherwise unviewable is withheld from everybody. It is taken off the total on the
+  page it would have appeared on, and the rule explanation reports it as not viewable without naming
+  it, so nothing identifies content the viewer was not allowed to see.
+- Rules are matched against the query that actually ran: a search corrected for a typo has its rules
+  read again against the corrected text, so merchandising is not bypassed by a correction. A search
+  whose rules place results is never corrected, since those results are held back from the provider
+  and its empty answer does not mean the search found nothing.
+- Scheduled and switchable rules: a start date, an end date, or both, entered in Craft's system
+  timezone and held in UTC, so a schedule means the moment it was given wherever it is read. Both
+  ends are inclusive.
+- Redirects are offered on the result rather than performed, and may only be a site-relative path or
+  an http(s) address. A redirect acts on the whole search, so a rule naming one site redirects a
+  search of that site alone and never one covering every site.
+- Every search carries what each rule did, matched or not, and what happened to each result. A hit's
+  provider score is kept apart from what the rules moved it by, so both can be read.
+- A control panel section for listing, creating, editing, enabling, disabling, scheduling, ordering
+  and deleting search rules, governed by a permission of its own so merchandising can be delegated
+  without handing over index configuration.
+
+### Fixed
+
+- A newly saved search index reported a configuration generation it was not on, so a rebuild started
+  from it could never report the index as current.
 
