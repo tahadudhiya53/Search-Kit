@@ -3,6 +3,7 @@
 
 {% set title = isNew ? "New search index"|t('search-kit') : index.name %}
 {% set fullPageForm = canManage %}
+{% set selectedSubnavItem = 'indexes' %}
 {% set crumbs = [{ label: "SearchKit"|t('search-kit'), url: url('search-kit') }] %}
 
 {% set siteOptions = [{ label: "All sites"|t('search-kit'), value: '' }] %}
@@ -109,6 +110,120 @@
         }) }}
     {% endfor %}
 
+    <hr>
+
+    <h2>{{ "Search behaviour"|t('search-kit') }}</h2>
+    <p>{{ "How this index treats the text it is searched with. None of this changes what is indexed, so changing it never needs a rebuild."|t('search-kit') }}</p>
+
+    {% if index.getErrors('searchSettings') %}
+        <ul class="errors">{% for error in index.getErrors('searchSettings') %}<li>{{ error }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% set behaviour = index.getSearchSettings() %}
+
+    {{ forms.lightswitchField({
+        label: "Search operators"|t('search-kit'),
+        id: 'searchSettings-operators',
+        name: 'searchSettings[operators]',
+        on: behaviour.operators,
+        instructions: 'Read <code>"phrases"</code>, <code>-exclusions</code>, <code>OR</code> and <code>*</code> in what is typed. Off, every word is searched for as written.'|t('search-kit'),
+    }) }}
+
+    {{ forms.selectField({
+        label: "Partial matching"|t('search-kit'),
+        id: 'searchSettings-partialMatching',
+        name: 'searchSettings[partialMatching]',
+        options: partialMatchOptions,
+        value: behaviour.partialMatching.value,
+        instructions: "How much of a word a term has to cover when nothing was typed to say otherwise."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Shortest partial match"|t('search-kit'),
+        id: 'searchSettings-minPartialLength',
+        name: 'searchSettings[minPartialLength]',
+        type: 'number',
+        min: 1,
+        max: 20,
+        size: 4,
+        value: behaviour.minPartialLength,
+        instructions: "Shorter terms are matched whole, so a two-letter word does not match everything."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Stop words"|t('search-kit'),
+        id: 'searchSettings-stopWords',
+        name: 'searchSettings[stopWords]',
+        on: behaviour.stopWords,
+        instructions: "Drop words too common to narrow anything down. A query made only of them is left alone."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Extra stop words"|t('search-kit'),
+        id: 'searchSettings-customStopWords',
+        name: 'searchSettings[customStopWords]',
+        value: behaviour.customStopWords|join(', '),
+        instructions: "Comma separated, on top of the built-in list."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Synonyms"|t('search-kit'),
+        id: 'searchSettings-synonyms',
+        name: 'searchSettings[synonyms]',
+        on: behaviour.synonyms,
+        instructions: "Apply the synonyms configured for this index."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Typo tolerance"|t('search-kit'),
+        id: 'searchSettings-typoTolerance',
+        name: 'searchSettings[typoTolerance]',
+        on: behaviour.typoTolerance,
+        instructions: "Retry a search that found nothing against the words the index holds."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Shortest word corrected"|t('search-kit'),
+        id: 'searchSettings-typoMinLength',
+        name: 'searchSettings[typoMinLength]',
+        type: 'number',
+        min: 1,
+        max: 20,
+        size: 4,
+        value: behaviour.typoMinLength,
+    }) }}
+
+    {{ forms.textField({
+        label: "Edits allowed"|t('search-kit'),
+        id: 'searchSettings-typoMaxDistance',
+        name: 'searchSettings[typoMaxDistance]',
+        type: 'number',
+        min: 1,
+        max: 2,
+        size: 4,
+        value: behaviour.typoMaxDistance,
+        instructions: "How far a correction may be from what was typed, counted in single-character edits."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Suggestions"|t('search-kit'),
+        id: 'searchSettings-suggestions',
+        name: 'searchSettings[suggestions]',
+        on: behaviour.suggestions,
+        instructions: "Offer something else to try when a search finds nothing."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Suggestions offered"|t('search-kit'),
+        id: 'searchSettings-suggestionLimit',
+        name: 'searchSettings[suggestionLimit]',
+        type: 'number',
+        min: 1,
+        max: 25,
+        size: 4,
+        value: behaviour.suggestionLimit,
+    }) }}
+
     {% if not isNew %}
         <hr>
 
@@ -120,6 +235,7 @@
             <li>{{ "Rebuild required"|t('search-kit') }}: {{ status.rebuildRequired ? "Yes"|t('search-kit') : "No"|t('search-kit') }}</li>
             <li>{{ "Provider can index"|t('search-kit') }}: {{ status.canIndex ? "Yes"|t('search-kit') : "No"|t('search-kit') }}</li>
             <li>{{ "Provider can delete"|t('search-kit') }}: {{ status.canDelete ? "Yes"|t('search-kit') : "No"|t('search-kit') }}</li>
+            <li>{{ "Words held for suggestions"|t('search-kit') }}: {{ termCount }}</li>
         </ul>
 
         {% if failures %}

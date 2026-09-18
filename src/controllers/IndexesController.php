@@ -6,8 +6,10 @@ use Craft;
 use craft\base\ElementInterface;
 use craft\web\Controller;
 use Tahadudhiya\SearchKit\base\SearchProviderInterface;
+use Tahadudhiya\SearchKit\enums\PartialMatchMode;
 use Tahadudhiya\SearchKit\models\SearchableField;
 use Tahadudhiya\SearchKit\models\SearchIndex;
+use Tahadudhiya\SearchKit\models\SearchSettings;
 use Tahadudhiya\SearchKit\providers\CraftProvider;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\web\ForbiddenHttpException;
@@ -84,8 +86,10 @@ class IndexesController extends Controller
             'isNew' => $index->id === null,
             'providerOptions' => $providerOptions,
             'elementTypeGroups' => $elementTypeGroups,
+            'partialMatchOptions' => $this->partialMatchOptions(),
             'status' => $index->id !== null ? $plugin->getIndexing()->getStatus($index) : null,
             'failures' => $index->id !== null ? $plugin->getIndexOperations()->getFailed($index->id) : [],
+            'termCount' => $index->id !== null ? $plugin->getTerms()->countForIndex($index->id) : 0,
             'canManage' => $this->canManage(),
             'canRebuild' => $this->canRebuild(),
         ]);
@@ -115,6 +119,8 @@ class IndexesController extends Controller
 
         $siteId = $request->getBodyParam('siteId');
         $index->siteId = $siteId !== null && $siteId !== '' ? (int)$siteId : null;
+
+        $index->setSearchSettings($this->resolveSearchSettings($request->getBodyParam('searchSettings')));
 
         $fields = $this->resolveFields(
             $request->getBodyParam('elementTypes', []),
@@ -164,6 +170,36 @@ class IndexesController extends Controller
         $this->setSuccessFlash(Craft::t('search-kit', '{count} operations queued for retry.', ['count' => $reset]));
 
         return $this->redirectToPostedUrl();
+    }
+
+    /**
+     * How this index treats the text it is searched with. Nothing posted here changes what is
+     * indexed, so a change to it never costs a rebuild, and nothing posted here is coerced: a
+     * value that cannot be read is reported rather than saved as something else.
+     */
+    private function resolveSearchSettings(mixed $posted): SearchSettings
+    {
+        return SearchSettings::fromInput(is_array($posted) ? $posted : []);
+    }
+
+    /**
+     * @return array<array{label:string,value:string}>
+     */
+    private function partialMatchOptions(): array
+    {
+        $labels = [
+            PartialMatchMode::Off->value => 'Whole words only',
+            PartialMatchMode::Prefix->value => 'The start of a word',
+            PartialMatchMode::Substring->value => 'Anywhere in a word',
+        ];
+
+        return array_map(
+            static fn(PartialMatchMode $mode) => [
+                'label' => Craft::t('search-kit', $labels[$mode->value]),
+                'value' => $mode->value,
+            ],
+            PartialMatchMode::cases(),
+        );
     }
 
     /**
