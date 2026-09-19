@@ -35,8 +35,9 @@ class Indexes extends Component
     {
         if ($this->_indexes === null) {
             $rows = (new Query())
-                ->select(['id', 'name', 'handle', 'provider', 'enabled', 'settings', 'searchSettings', 'siteId',
-                    'dateLastIndexed', 'configurationVersion', 'rebuildRequired', 'rebuildPending', 'uid', ])
+                ->select(['id', 'name', 'handle', 'provider', 'enabled', 'settings', 'searchSettings',
+                    'analyticsSettings', 'siteId', 'dateLastIndexed', 'configurationVersion', 'rebuildRequired',
+                    'rebuildPending', 'uid', ])
                 ->from([Table::INDEXES])
                 ->orderBy(['name' => SORT_ASC])
                 ->all();
@@ -169,6 +170,7 @@ class Indexes extends Component
         $record->enabled = $index->enabled;
         $record->settings = $index->settings !== [] ? Json::encode($index->settings) : null;
         $record->searchSettings = Json::encode($index->getSearchSettings()->toConfig());
+        $record->analyticsSettings = Json::encode($index->getAnalyticsSettings()->toConfig());
         $record->siteId = $index->siteId;
         $record->rebuildRequired = $index->rebuildRequired || $invalidated;
 
@@ -399,6 +401,10 @@ class Indexes extends Component
 
         if ($row['searchSettings'] !== null) {
             $index->setSearchSettings((array)Json::decodeIfJson($row['searchSettings']));
+        }
+
+        if ($row['analyticsSettings'] !== null) {
+            $index->setAnalyticsSettings((array)Json::decodeIfJson($row['analyticsSettings']));
         }
 
         return $index;

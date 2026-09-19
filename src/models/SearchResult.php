@@ -41,9 +41,21 @@ class SearchResult extends Model
     /** @var RuleEvaluation[] Every search rule considered, matched or not, and what it did. */
     public array $rules = [];
 
+    /**
+     * @var string|null The token this search was recorded under, when it was. A template posts it
+     * back to associate a result someone opened with the search that found it. It identifies the
+     * search, never the person who made it.
+     */
+    public ?string $trackingToken = null;
+
     public function wasCorrected(): bool
     {
         return $this->correctedText !== null;
+    }
+
+    public function isTracked(): bool
+    {
+        return $this->trackingToken !== null;
     }
 
     public function hasRedirect(): bool

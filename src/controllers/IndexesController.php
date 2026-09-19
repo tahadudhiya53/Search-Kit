@@ -7,6 +7,7 @@ use craft\base\ElementInterface;
 use craft\web\Controller;
 use Tahadudhiya\SearchKit\base\SearchProviderInterface;
 use Tahadudhiya\SearchKit\enums\PartialMatchMode;
+use Tahadudhiya\SearchKit\models\AnalyticsSettings;
 use Tahadudhiya\SearchKit\models\SearchableField;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchSettings;
@@ -121,6 +122,7 @@ class IndexesController extends Controller
         $index->siteId = $siteId !== null && $siteId !== '' ? (int)$siteId : null;
 
         $index->setSearchSettings($this->resolveSearchSettings($request->getBodyParam('searchSettings')));
+        $index->setAnalyticsSettings($this->resolveAnalyticsSettings($request->getBodyParam('analyticsSettings')));
 
         $fields = $this->resolveFields(
             $request->getBodyParam('elementTypes', []),
@@ -145,7 +147,7 @@ class IndexesController extends Controller
         $this->plugin()->getIndexes()->deleteIndex($index);
         $this->setSuccessFlash(Craft::t('search-kit', 'Search index deleted.'));
 
-        return $this->redirect('search-kit');
+        return $this->redirect('search-kit/indexes');
     }
 
     public function actionRebuild(): Response
@@ -180,6 +182,14 @@ class IndexesController extends Controller
     private function resolveSearchSettings(mixed $posted): SearchSettings
     {
         return SearchSettings::fromInput(is_array($posted) ? $posted : []);
+    }
+
+    /**
+     * What this index records about its searches. Nothing posted here is coerced either.
+     */
+    private function resolveAnalyticsSettings(mixed $posted): AnalyticsSettings
+    {
+        return AnalyticsSettings::fromInput(is_array($posted) ? $posted : []);
     }
 
     /**

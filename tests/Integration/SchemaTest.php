@@ -19,6 +19,8 @@ class SchemaTest extends IntegrationTestCase
         self::assertNotEmpty($this->tableSchema(Table::TERMS)->columns);
         self::assertNotEmpty($this->tableSchema(Table::RULES)->columns);
         self::assertNotEmpty($this->tableSchema(Table::RULEACTIONS)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::SEARCHEVENTS)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::SEARCHCLICKS)->columns);
     }
 
     public function testRuleTablesHaveTheExpectedColumns(): void
@@ -65,9 +67,9 @@ class SchemaTest extends IntegrationTestCase
         self::assertSame(['id'], $schema->primaryKey);
         self::assertEqualsCanonicalizing(
             [
-                'id', 'name', 'handle', 'provider', 'enabled', 'settings', 'searchSettings', 'siteId',
-                'dateLastIndexed', 'configurationVersion', 'rebuildRequired', 'rebuildPending',
-                'dateCreated', 'dateUpdated', 'uid',
+                'id', 'name', 'handle', 'provider', 'enabled', 'settings', 'searchSettings',
+                'analyticsSettings', 'siteId', 'dateLastIndexed', 'configurationVersion',
+                'rebuildRequired', 'rebuildPending', 'dateCreated', 'dateUpdated', 'uid',
             ],
             array_keys($schema->columns),
         );
@@ -77,11 +79,44 @@ class SchemaTest extends IntegrationTestCase
         self::assertTrue($schema->columns['siteId']->allowNull);
         self::assertTrue($schema->columns['settings']->allowNull);
         self::assertTrue($schema->columns['searchSettings']->allowNull);
+        self::assertTrue($schema->columns['analyticsSettings']->allowNull);
         self::assertTrue($schema->columns['dateLastIndexed']->allowNull);
         self::assertFalse($schema->columns['rebuildRequired']->allowNull);
         self::assertFalse($schema->columns['rebuildPending']->allowNull);
         // The generation is what stops an old rebuild settling a newer configuration.
         self::assertFalse($schema->columns['configurationVersion']->allowNull);
+    }
+
+    public function testSearchActivityTablesHaveTheExpectedColumns(): void
+    {
+        $events = $this->tableSchema(Table::SEARCHEVENTS);
+
+        self::assertEqualsCanonicalizing(
+            [
+                'id', 'indexId', 'siteId', 'query', 'normalizedQuery', 'correctedQuery', 'language',
+                'resultCount', 'trackedResults', 'executionTime', 'clickCount', 'dateCreated', 'uid',
+            ],
+            array_keys($events->columns),
+        );
+
+        // A search of an index's whole scope names no site; one of a single site names it.
+        self::assertTrue($events->columns['siteId']->allowNull);
+        self::assertFalse($events->columns['query']->allowNull);
+        self::assertFalse($events->columns['resultCount']->allowNull);
+        self::assertTrue($events->columns['correctedQuery']->allowNull);
+        // A search nobody could click on remembers no results, so a click has nothing to name.
+        self::assertTrue($events->columns['trackedResults']->allowNull);
+
+        $clicks = $this->tableSchema(Table::SEARCHCLICKS);
+
+        self::assertEqualsCanonicalizing(
+            ['id', 'eventId', 'elementId', 'elementType', 'siteId', 'position', 'dateCreated'],
+            array_keys($clicks->columns),
+        );
+
+        self::assertFalse($clicks->columns['eventId']->allowNull);
+        self::assertFalse($clicks->columns['elementId']->allowNull);
+        self::assertFalse($clicks->columns['siteId']->allowNull);
     }
 
     public function testIndexOperationsTableHasTheExpectedColumns(): void

@@ -55,6 +55,9 @@ class SearchIndex extends Model
     /** @var SearchSettings|null How this index treats the text it is searched with. */
     private ?SearchSettings $_searchSettings = null;
 
+    /** @var AnalyticsSettings|null What this index records about its searches, and for how long. */
+    private ?AnalyticsSettings $_analyticsSettings = null;
+
     public function getSearchSettings(): SearchSettings
     {
         return $this->_searchSettings ??= new SearchSettings();
@@ -68,6 +71,21 @@ class SearchIndex extends Model
         $this->_searchSettings = $settings instanceof SearchSettings
             ? $settings
             : SearchSettings::fromConfig($settings);
+    }
+
+    public function getAnalyticsSettings(): AnalyticsSettings
+    {
+        return $this->_analyticsSettings ??= new AnalyticsSettings();
+    }
+
+    /**
+     * @param AnalyticsSettings|array<string,mixed> $settings
+     */
+    public function setAnalyticsSettings(AnalyticsSettings|array $settings): void
+    {
+        $this->_analyticsSettings = $settings instanceof AnalyticsSettings
+            ? $settings
+            : AnalyticsSettings::fromConfig($settings);
     }
 
     public function coversAllSites(): bool
@@ -154,13 +172,20 @@ class SearchIndex extends Model
     }
 
     /**
-     * Search behaviour is a model of its own, so it is validated alongside the index it belongs to.
+     * Search behaviour and analytics are models of their own, so they are validated alongside the
+     * index they belong to.
      */
     public function afterValidate(): void
     {
         if (!$this->getSearchSettings()->validate()) {
             foreach ($this->getSearchSettings()->getErrorSummary(true) as $error) {
                 $this->addError('searchSettings', $error);
+            }
+        }
+
+        if (!$this->getAnalyticsSettings()->validate()) {
+            foreach ($this->getAnalyticsSettings()->getErrorSummary(true) as $error) {
+                $this->addError('analyticsSettings', $error);
             }
         }
 

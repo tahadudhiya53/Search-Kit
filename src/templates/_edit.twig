@@ -4,7 +4,7 @@
 {% set title = isNew ? "New search index"|t('search-kit') : index.name %}
 {% set fullPageForm = canManage %}
 {% set selectedSubnavItem = 'indexes' %}
-{% set crumbs = [{ label: "SearchKit"|t('search-kit'), url: url('search-kit') }] %}
+{% set crumbs = [{ label: "SearchKit"|t('search-kit'), url: url('search-kit/indexes') }] %}
 
 {% set siteOptions = [{ label: "All sites"|t('search-kit'), value: '' }] %}
 {% for site in craft.app.sites.getAllSites() %}
@@ -222,6 +222,57 @@
         max: 25,
         size: 4,
         value: behaviour.suggestionLimit,
+    }) }}
+
+    <hr>
+
+    <h2>{{ "Search activity"|t('search-kit') }}</h2>
+    <p>{{ "What is recorded about searches of this index. Nothing recorded identifies who searched."|t('search-kit') }}</p>
+
+    {% if index.getErrors('analyticsSettings') %}
+        <ul class="errors">{% for error in index.getErrors('analyticsSettings') %}<li>{{ error }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% set activity = index.getAnalyticsSettings() %}
+
+    {{ forms.lightswitchField({
+        label: "Record searches"|t('search-kit'),
+        id: 'analyticsSettings-enabled',
+        name: 'analyticsSettings[enabled]',
+        on: activity.enabled,
+        instructions: "Keep what was searched for, how many results came back and how long it took."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Record opened results"|t('search-kit'),
+        id: 'analyticsSettings-trackClicks',
+        name: 'analyticsSettings[trackClicks]',
+        on: activity.trackClicks,
+        instructions: "Associate a result someone opened with the search that found it."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Kept for"|t('search-kit'),
+        id: 'analyticsSettings-retentionDays',
+        name: 'analyticsSettings[retentionDays]',
+        type: 'number',
+        min: 1,
+        max: 3650,
+        size: 5,
+        value: activity.retentionDays,
+        instructions: "Days. Anything older is deleted when Craft next tidies up."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Slow search"|t('search-kit'),
+        id: 'analyticsSettings-slowThreshold',
+        name: 'analyticsSettings[slowThreshold]',
+        type: 'number',
+        min: 1,
+        max: 60000,
+        size: 6,
+        value: activity.slowThreshold,
+        instructions: "Milliseconds beyond which a search counts as slow."|t('search-kit'),
     }) }}
 
     {% if not isNew %}

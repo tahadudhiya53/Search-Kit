@@ -6,6 +6,7 @@ use craft\db\Migration;
 use craft\db\Table as CraftTable;
 use Tahadudhiya\SearchKit\db\Table;
 use Tahadudhiya\SearchKit\enums\IndexOperationStatus;
+use Tahadudhiya\SearchKit\services\Analytics;
 use Tahadudhiya\SearchKit\services\Terms;
 
 /**
@@ -16,6 +17,7 @@ class Install extends Migration
     public function safeUp(): bool
     {
         $this->createTables();
+        $this->createAnalyticsTables();
         $this->createIndexes();
         $this->addForeignKeys();
 
@@ -25,6 +27,8 @@ class Install extends Migration
     public function safeDown(): bool
     {
         // Dropped child-first so the foreign keys go with the tables.
+        $this->dropTableIfExists(Table::SEARCHCLICKS);
+        $this->dropTableIfExists(Table::SEARCHEVENTS);
         $this->dropTableIfExists(Table::RULEACTIONS);
         $this->dropTableIfExists(Table::RULES);
         $this->dropTableIfExists(Table::TERMS);
@@ -47,6 +51,8 @@ class Install extends Migration
             'settings' => $this->text(),
             // How this index treats the text it is searched with, rather than what serves it.
             'searchSettings' => $this->text(),
+            // Whether this index's searches are recorded, and for how long they are kept.
+            'analyticsSettings' => $this->text(),
             'siteId' => $this->integer(),
             'dateLastIndexed' => $this->dateTime(),
             // Bumped whenever an effective configuration change lands, so a rebuild that started
@@ -160,6 +166,47 @@ class Install extends Migration
         ]);
     }
 
+    /**
+     * What was searched for, and what came back. Nothing here identifies who searched: no account,
+     * no address and no session, so the table describes search behaviour and nothing else.
+     */
+    private function createAnalyticsTables(): void
+    {
+        $this->createTable(Table::SEARCHEVENTS, [
+            'id' => $this->primaryKey(),
+            'indexId' => $this->integer()->notNull(),
+            // The site searched, or null for a search covering the whole of an index's scope.
+            'siteId' => $this->integer(),
+            'query' => $this->string(Analytics::MAX_QUERY_LENGTH)->notNull(),
+            // The same text reduced the way the index reduces it, which is what queries group by.
+            'normalizedQuery' => $this->string(Analytics::MAX_QUERY_LENGTH)->notNull(),
+            'correctedQuery' => $this->string(Analytics::MAX_QUERY_LENGTH),
+            'language' => $this->string(24)->notNull(),
+            'resultCount' => $this->integer()->notNull()->defaultValue(0),
+            // The results this search actually returned, which is the only thing a click may name.
+            // Bounded, so a wide result window cannot turn one search into unbounded storage.
+            'trackedResults' => $this->text(),
+            'executionTime' => $this->decimal(12, 3)->notNull()->defaultValue(0),
+            // Kept alongside the clicks themselves so a click-through rate needs no join.
+            'clickCount' => $this->integer()->notNull()->defaultValue(0),
+            'dateCreated' => $this->dateTime()->notNull(),
+            // The token a result carries back when it is clicked, so a click needs no identity.
+            'uid' => $this->uid(),
+        ]);
+
+        $this->createTable(Table::SEARCHCLICKS, [
+            'id' => $this->primaryKey(),
+            'eventId' => $this->integer()->notNull(),
+            'elementId' => $this->integer()->notNull(),
+            'elementType' => $this->string()->notNull(),
+            'siteId' => $this->integer()->notNull(),
+            // Where the clicked result sat in the search it came from, counted from one.
+            'position' => $this->integer()->notNull(),
+            'dateCreated' => $this->dateTime()->notNull(),
+        ]);
+
+    }
+
     private function createIndexes(): void
     {
         $this->createIndex(null, Table::INDEXES, ['handle'], true);
@@ -183,6 +230,18 @@ class Install extends Migration
         $this->createIndex(null, Table::RULEACTIONS, ['ruleId'], false);
         $this->createIndex(null, Table::RULEACTIONS, ['elementId'], false);
         $this->createIndex(null, Table::RULEACTIONS, ['siteId'], false);
+
+        // Every reading of search activity is one index over a date range, then grouped by query.
+        $this->createIndex(null, Table::SEARCHEVENTS, ['indexId', 'dateCreated'], false);
+        $this->createIndex(null, Table::SEARCHEVENTS, ['indexId', 'normalizedQuery'], false);
+        $this->createIndex(null, Table::SEARCHEVENTS, ['indexId', 'resultCount'], false);
+        $this->createIndex(null, Table::SEARCHEVENTS, ['siteId'], false);
+        // The click token, which is the only way back from a click to the search it came from.
+        $this->createIndex(null, Table::SEARCHEVENTS, ['uid'], true);
+
+        // One click per result per search: a second report of the same one cannot inflate a rate.
+        $this->createIndex(null, Table::SEARCHCLICKS, ['eventId', 'elementId', 'siteId'], true);
+        $this->createIndex(null, Table::SEARCHCLICKS, ['elementId'], false);
     }
 
     private function addForeignKeys(): void
@@ -209,5 +268,9 @@ class Install extends Migration
         // An action naming a deleted element has nothing left to do, so it goes with it.
         $this->addForeignKey(null, Table::RULEACTIONS, ['elementId'], CraftTable::ELEMENTS, ['id'], 'CASCADE', null);
         $this->addForeignKey(null, Table::RULEACTIONS, ['siteId'], CraftTable::SITES, ['id'], 'CASCADE', null);
+
+        $this->addForeignKey(null, Table::SEARCHEVENTS, ['indexId'], Table::INDEXES, ['id'], 'CASCADE', null);
+        $this->addForeignKey(null, Table::SEARCHEVENTS, ['siteId'], CraftTable::SITES, ['id'], 'CASCADE', null);
+        $this->addForeignKey(null, Table::SEARCHCLICKS, ['eventId'], Table::SEARCHEVENTS, ['id'], 'CASCADE', null);
     }
 }
