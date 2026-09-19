@@ -1,0 +1,39 @@
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Most opened results"|t('search-kit') }}</h2>
+    </div>
+    <p class="light sk-hint">{{ "What people clicked through to after searching."|t('search-kit') }}</p>
+
+    {% if clickedResults is empty %}
+        <p class="zilch">{{ "No result clicks recorded for this period."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Result"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Site"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Opened"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Position"|t('search-kit') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for result in clickedResults %}
+                    <tr>
+                        <th scope="row">
+                            {%- if result.isResolved() and result.cpEditUrl -%}
+                                <a href="{{ result.cpEditUrl }}" class="sk-query" title="{{ result.label }}">{{ result.label }}</a>
+                            {%- elseif result.isResolved() -%}
+                                <span class="sk-query" title="{{ result.label }}">{{ result.label }}</span>
+                            {%- else -%}
+                                <span class="light">{{ "No longer available"|t('search-kit') }}</span>
+                            {%- endif -%}
+                        </th>
+                        <td>{{ siteNames[result.siteId] ?? "Unknown site"|t('search-kit') }}</td>
+                        <td class="rightalign">{{ result.clicks|number_format }}</td>
+                        <td class="rightalign">{{ result.averagePosition|number_format(1) }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>

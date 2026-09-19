@@ -12,9 +12,12 @@ snippets and highlighting, and queue-backed indexing that follows every content 
 visitor types goes through a query pipeline of its own — normalization, operators, stop words,
 synonyms and typo correction — and a search that finds nothing offers something else to try. Search
 rules give deliberate control over what a particular query returns: boost, bury, hide, pin, promote
-and redirect, on a schedule and in a fixed priority order. Indexes, rules, synonyms and search
-behaviour are managed from the control panel or from PHP. A provider backed by Craft's own search
-index ships with it.
+and redirect, on a schedule and in a fixed priority order. Every search can be recorded — what was
+searched for, what came back and what was opened, and nothing about who searched — and read back as
+popular queries, zero-result queries, content gaps, trends and response times, on a control panel
+dashboard that shows how search is doing at a glance. Indexes, rules, synonyms, search behaviour and
+what is recorded are managed from the control panel or from PHP. A provider backed by Craft's own
+search index ships with it.
 
 See [Limitations](#limitations) for what is not there yet.
 
@@ -571,6 +574,138 @@ reports a correction, so rules there are matched against what the visitor typed.
 A search whose rules place results is never corrected: placed results are held back from the provider
 while it searches, so an empty answer from it does not mean the search found nothing.
 
+## Search activity
+
+SearchKit records what is searched for, so the searches that fail and the content nobody can find
+are visible rather than guessed at.
+
+Nothing recorded identifies who searched. There is no account, no address, no session and no
+identifier of any kind on a recorded search — only the search itself:
+
+```
+query · normalized query · corrected query · index · site · language
+result count · response time · results opened · when
+```
+
+The query is kept twice: once exactly as it was typed, and once reduced the way the index reduces
+it. Queries group on the reduced form, so `Winter Boots` and `winter  boots` are one query, while
+what was actually typed is still there to read.
+
+Recording is a listener on the search event, not a step inside the search. A search costs one
+insert to record, and a search that cannot be recorded still returns its results.
+
+### What each index records
+
+Each index decides for itself, on its edit page:
+
+| Setting | What it does |
+|---|---|
+| Record searches | Whether searches of this index are recorded at all |
+| Record opened results | Whether a result someone opened can be tied back to the search that found it |
+| Kept for | Days a recorded search is kept, after which it is deleted |
+| Slow search | Milliseconds beyond which a search counts as slow |
+
+There is no “keep everything”: retention is always a number of days, enforced by Craft’s own
+garbage collection, which `php craft gc` runs on demand.
+
+### Associating a click
+
+A recorded search hands back a token. Post it with the result that was opened and the two are tied
+together — the token is the only link, and it identifies the search, never the person:
+
+```twig
+{% set results = craft.searchKit.search('site', query) %}
+
+{% for hit in results.hits %}
+    <a href="{{ hit.element.url }}">{{ hit.element.title }}</a>
+
+    {% if results.isTracked() %}
+        <form method="post" class="searchkit-click">
+            {{ csrfInput() }}
+            {{ actionInput('search-kit/analytics/click') }}
+            {{ hiddenInput('token', results.trackingToken) }}
+            {{ hiddenInput('elementId', hit.elementId) }}
+            {{ hiddenInput('siteId', hit.siteId) }}
+        </form>
+    {% endif %}
+{% endfor %}
+```
+
+Nothing posted is trusted. A recorded search remembers which results it returned — the element and
+the site each of them named — and a click is only accepted when it names one of them. So the token
+has to belong to a search from the last 24 hours, that search has to have returned *this* result in
+*this* site, and the element has to still exist. A result from another site, a result the search
+never returned, one past the window it returned, an element since deleted, and an invented or
+expired token are all refused.
+
+Where the result sat is read from the search rather than posted, so which result it was is the only
+thing a page reports. The same result reported twice for one search is counted once, so a reload
+cannot inflate a rate.
+
+A search remembers at most its first 100 results for this purpose, and remembers none at all when
+the index does not follow clicks, so a wide result window cannot turn one search into unbounded
+storage.
+
+### Reading it back
+
+```php
+use Tahadudhiya\SearchKit\SearchKit;
+use Tahadudhiya\SearchKit\models\InsightsCriteria;
+
+$insights = SearchKit::getInstance()->getInsights();
+$criteria = new InsightsCriteria(['indexId' => $index->id, 'dateFrom' => new DateTime('-30 days')]);
+// dateFrom is inclusive and dateTo is exclusive, so a whole day can be asked for by its two ends.
+
+$insights->getSummary($criteria);            // totals, rates and response time
+$insights->getPopularQueries($criteria);     // what people search for most
+$insights->getZeroResultQueries($criteria);  // what comes back with nothing
+$insights->getContentGaps($criteria);        // searched for repeatedly, nothing ever opened
+$insights->getSlowQueries($criteria);        // the ones past what the index calls slow
+$insights->getTrend($criteria);              // day by day, optionally for one query
+$insights->getClickedResults($criteria);     // the results people opened most
+$insights->getRecentSearches($criteria);     // the searches themselves
+```
+
+Every reading is one grouped query over an indexed date range, and is reused for up to five minutes
+— but only while nothing new has been recorded. A search or an opened result makes every page read
+it again, so opening a page never costs a scan of the whole table and no two pages can disagree
+about what has happened. Rates are counted on searches rather than on
+clicks: a click-through rate is the share of searches that led to something being opened, however
+many results were opened.
+
+### Dashboard
+
+The **SearchKit** section itself opens the dashboard, which puts all of this on one page for
+whoever may view search activity. Without that permission it opens the indexes instead.
+
+| Section | What it shows |
+|---|---|
+| Overview | Searches, different things searched for, the share that found nothing, the share that led to a click, average response time, and how many searches were slow |
+| Search activity over time | Searches and zero-result searches day by day, with the same figures as a table |
+| Search outcomes | How much of the period found results, found nothing, or led to a click |
+| Most searched for | The queries people search for most, with their zero-result and click-through rates |
+| Queries returning no results | What came back with nothing, most often first |
+| Most opened results | The results people clicked through to, and where in the results they were |
+| Queries nothing came of | Searched at least twice in the period with no result ever opened |
+| Performance | Average response time over the period, and the queries averaging slower than the index calls slow |
+| Search health | Every index: whether it is serving, its provider, its site scope and what it records |
+
+Everything on the page reads the same index, site and date filters, with presets for the last 7, 30
+and 90 days. The dates mean the same thing they do everywhere else in SearchKit: the day chosen at
+the far end is counted in full. A site filter counts searches of that site alone.
+
+**Arranging it.** *Arrange panels* turns on a mode where each panel can be dragged by its bar into
+any place on the grid, set to take one, two, three or four of the dashboard's columns, or put away
+altogether — and brought back from the bar of panels you have put away, which sits with the
+filters. An arrangement belongs to the
+person who made it: nobody else's dashboard moves, and it decides nothing about what anybody is
+allowed to see. *Reset to the default arrangement* puts it back. Dragging needs JavaScript;
+everything else works without it.
+
+Each section says so plainly when there is nothing to show, and a reading that cannot be taken
+leaves the rest of the page standing. The charts are drawn as plain SVG — no chart library, no
+JavaScript — and everything a chart says is also written out as a figure or a table beside it.
+
 ## Indexing
 
 SearchKit keeps an index in step with Craft content by listening to Craft's own element events.
@@ -692,10 +827,15 @@ the results, their schedule and their priority.
 
 **SearchKit → Synonyms** lists and edits synonym groups.
 
-Four permissions govern all of it: viewing, managing indexes, rebuilding or retrying, and managing
-rules. Synonyms and search behaviour are managed under the same permission as the indexes they
-belong to; rules have their own, so merchandising can be delegated without handing over index
-configuration.
+**SearchKit → Search activity** lists recorded searches, filtered by index, site and date range,
+with the totals for whatever is being shown. A date range covers the whole of both days it names.
+Deleting from that page forgets every search recorded for the selected index, or for every index —
+it is not limited by the dates or the site being shown, and says so.
+
+Six permissions govern all of it: viewing, managing indexes, rebuilding or retrying, managing
+rules, viewing search activity and deleting it. Synonyms and search behaviour are managed under the
+same permission as the indexes they belong to; rules and search activity have their own, so
+merchandising and measurement can each be delegated without handing over index configuration.
 
 ### Commands
 
@@ -718,8 +858,8 @@ What SearchKit does not do yet, and the limits of what it does.
   correct against unpublished content, even as an administrator.
 - The built-in stop word list is English. Any other language needs its own words configured.
 - `-` and `OR` cannot be combined in one term; the query is refused rather than reinterpreted.
-- Suggestions are ranked by how little they change what was typed. Nothing knows what is popular,
-  because nothing about what visitors search for is recorded.
+- Suggestions are ranked by how little they change what was typed. Recorded search activity is not
+  used to rank them, so nothing knows what is popular.
 - No faceting or field-scoped search.
 - A rule's boost or bury amount is shared by every result it moves; different amounts for different
   results need one rule each. A rule's results are chosen only after it has been saved with an index
@@ -733,7 +873,18 @@ What SearchKit does not do yet, and the limits of what it does.
   placed results on every page, including the ones they never appear on.
 - A rule that boosts or buries costs one extra search, to fetch the results it moves. Rules that only
   hide, pin, promote or redirect cost nothing extra.
-- No analytics or debugger.
+- Search activity is counted by UTC day, whatever timezone the site runs in.
+- A click has to be reported by the page showing the results; nothing is tracked automatically, and
+  a result opened more than 24 hours after the search that found it is not associated with it.
+- A click on a result past the first 100 a search returned is not associated with that search.
+- Recorded searches are deleted for a whole index at a time. There is no way to delete only part of
+  what was recorded, other than waiting for retention to reach it.
+- The dashboard filters by index, site and date range. There is no filtering by query, and no
+  comparison against a previous period.
+- Dashboard tables show the top few rows of each metric. Longer listings are readable from PHP.
+- The dashboard has a fixed set of panels: they can be arranged, resized and put away, but not
+  configured, duplicated or added to.
+- No debugger.
 
 ## Local development
 

@@ -21,6 +21,7 @@ class SchemaTest extends IntegrationTestCase
         self::assertNotEmpty($this->tableSchema(Table::RULEACTIONS)->columns);
         self::assertNotEmpty($this->tableSchema(Table::SEARCHEVENTS)->columns);
         self::assertNotEmpty($this->tableSchema(Table::SEARCHCLICKS)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::DASHBOARDLAYOUTS)->columns);
     }
 
     public function testRuleTablesHaveTheExpectedColumns(): void

@@ -16,4 +16,5 @@ abstract class Table
     public const RULEACTIONS = '{{%searchkit_ruleactions}}';
     public const SEARCHEVENTS = '{{%searchkit_searchevents}}';
     public const SEARCHCLICKS = '{{%searchkit_searchclicks}}';
+    public const DASHBOARDLAYOUTS = '{{%searchkit_dashboardlayouts}}';
 }

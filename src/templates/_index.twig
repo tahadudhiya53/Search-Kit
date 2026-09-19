@@ -73,7 +73,7 @@
                                     {{ csrfInput() }}
                                     {{ actionInput('search-kit/indexes/rebuild') }}
                                     {{ hiddenInput('indexId', index.id) }}
-                                    {{ redirectInput('search-kit') }}
+                                    {{ redirectInput('search-kit/indexes') }}
                                     <button type="submit" class="btn">{{ "Rebuild"|t('search-kit') }}</button>
                                 </form>
                             {% endif %}
@@ -82,7 +82,7 @@
                                     {{ csrfInput() }}
                                     {{ actionInput('search-kit/indexes/retry-failed') }}
                                     {{ hiddenInput('indexId', index.id) }}
-                                    {{ redirectInput('search-kit') }}
+                                    {{ redirectInput('search-kit/indexes') }}
                                     <button type="submit" class="btn">{{ "Retry failed"|t('search-kit') }}</button>
                                 </form>
                             {% endif %}

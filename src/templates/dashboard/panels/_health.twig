@@ -1,0 +1,70 @@
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Search health"|t('search-kit') }}</h2>
+    </div>
+
+    {% if health is empty %}
+        <p class="zilch">
+            {{ "No search indexes are configured yet."|t('search-kit') }}
+            <a href="{{ url('search-kit/indexes') }}">{{ "Set one up"|t('search-kit') }}</a>
+        </p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Index"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Provider"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Site"|t('search-kit') }}</th>
+                    <th scope="col">{{ "State"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Recording searches"|t('search-kit') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in health %}
+                    <tr>
+                        <th scope="row">
+                            <span class="status {{ row.index.enabled ? 'enabled' : 'disabled' }}"></span>
+                            <a href="{{ url('search-kit/indexes/' ~ row.index.id) }}">{{ row.index.name }}</a>
+                        </th>
+                        <td>
+                            {{ row.index.provider|split('\\')|last }}
+                            {% if row.status.provider and not row.status.provider.available %}
+                                <span class="error">{{ row.status.provider.message }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {%- if row.index.siteId -%}
+                                {{ siteNames[row.index.siteId] ?? row.index.siteId }}
+                            {%- else -%}
+                                {{ "All sites"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td>
+                            {%- if not row.index.enabled -%}
+                                <span class="light">{{ "Disabled"|t('search-kit') }}</span>
+                            {%- elseif row.status.rebuildRequired -%}
+                                <span class="error">{{ "Rebuild required"|t('search-kit') }}</span>
+                            {%- elseif row.status.failed -%}
+                                <span class="error">{{ "{count} failed"|t('search-kit', { count: row.status.failed }) }}</span>
+                            {%- elseif row.status.pending -%}
+                                {{ "Indexing {count}"|t('search-kit', { count: row.status.pending }) }}
+                            {%- elseif row.status.isHealthy() -%}
+                                {{ "Ready"|t('search-kit') }}
+                            {%- else -%}
+                                {{ "Needs attention"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td>
+                            {%- if row.analytics.enabled -%}
+                                {{ "Kept for {days} days"|t('search-kit', { days: row.analytics.retentionDays }) }}
+                                {%- if not row.analytics.trackClicks %}, {{ "clicks not followed"|t('search-kit') }}{% endif -%}
+                            {%- else -%}
+                                <span class="light">{{ "Not recording"|t('search-kit') }}</span>
+                            {%- endif -%}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>

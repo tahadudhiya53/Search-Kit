@@ -159,6 +159,54 @@
   and deleting search rules, governed by a permission of its own so merchandising can be delegated
   without handing over index configuration.
 
+- Search activity recording: every search can be recorded with what was searched for exactly as it
+  was typed, the form it normalized to, what it was corrected to, its index, site and language, how
+  many results came back and how long it took. Queries group on the normalized form, so what was
+  typed stays readable without splitting one query into several. Nothing recorded identifies who searched — no account, no address, no session
+  and no identifier of any kind.
+- Recording hangs off the search event rather than sitting inside the search, so search behaviour is
+  unchanged whether anything is listening or not, a recorded search costs one insert, and a search
+  that cannot be recorded still returns its results.
+- Click tracking: a recorded search hands back a token a template posts with the result that was
+  opened, which is the only thing tying the two together. A recorded search remembers which results
+  it returned and in which site, and a click is only accepted when it names one of them — so a
+  result from another site, one the search never returned, one past the window it returned, an
+  element since deleted, and an invented or expired token are all refused. Where the result sat is
+  read from the search rather than posted, and the same result reported twice for one search is
+  counted once. A search remembers at most its first 100 results for this, and none at all when the
+  index does not follow clicks.
+- Date filtering that covers whole days: the start of a range is inclusive and its end is
+  exclusive, so asking for activity up to a day counts everything that happened on it, in the
+  timezone the day was chosen in.
+- Search metrics, each read as one grouped query over an indexed date range and reused only while
+  nothing new has been recorded, so no two pages can disagree about what has happened:
+  total searches, unique queries, popular queries, zero-result searches and their rate, search and
+  per-query trends by day, result clicks, click-through rate, average response time, slow searches
+  and content gaps — queries searched for repeatedly that nothing ever came of.
+- Per-index analytics settings: whether searches are recorded, whether opened results are, how many
+  days recorded searches are kept, and what counts as slow. There is no unlimited retention; anything
+  past an index's retention is deleted by Craft's own garbage collection.
+- A control panel section listing recorded searches, filtered by index, site and date range, with the
+  totals for what is shown and a way to forget every search recorded for an index or for all of
+  them, governed by permissions of their own so measurement can be delegated without handing over
+  index configuration.
+- A control panel dashboard, which the SearchKit section itself opens: the totals for a period as
+  cards, search activity and response time over it as charts, and compact tables of what was
+  searched for most, what returned nothing, what was opened most, what nothing ever came of, and
+  what ran slowest — alongside the state of every
+  index serving them. It reads the same index, site and date filters throughout, says what is
+  missing rather than drawing an empty chart, and keeps the rest of the page standing when a reading
+  cannot be taken.
+- The results people opened most, as a metric of its own, named in one query per element type and
+  site so a list of them costs no more lookups than a single one. A result that can no longer be
+  read keeps its count and loses its name.
+- Response time is read day by day alongside searches, and a period too long to read a day at a time
+  is grouped into fewer points without losing any of what it counted.
+- The dashboard can be arranged: every panel can be dragged into place, made one to four columns
+  wide, put away and brought back. An arrangement is the one person's own,
+  saved for them alone, and decides nothing about what anybody may see. Dragging uses Craft's own
+  drag sorting; everything else works without JavaScript.
+
 ### Fixed
 
 - A newly saved search index reported a configuration generation it was not on, so a rebuild started

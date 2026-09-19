@@ -14,6 +14,7 @@ use craft\web\twig\variables\CraftVariable;
 use craft\web\UrlManager;
 use Tahadudhiya\SearchKit\events\SearchEvent;
 use Tahadudhiya\SearchKit\services\Analytics;
+use Tahadudhiya\SearchKit\services\DashboardLayouts;
 use Tahadudhiya\SearchKit\services\Documents;
 use Tahadudhiya\SearchKit\services\Highlighting;
 use Tahadudhiya\SearchKit\services\Indexes;
@@ -38,6 +39,7 @@ use yii\base\Event;
  * SearchKit — search management and intelligence for Craft CMS.
  *
  * @property-read Analytics $analytics
+ * @property-read DashboardLayouts $dashboardLayouts
  * @property-read Documents $documents
  * @property-read Highlighting $highlighting
  * @property-read IndexOperations $indexOperations
@@ -68,7 +70,7 @@ class SearchKit extends Plugin
     public const PERMISSION_VIEW_INSIGHTS = 'searchKit:viewInsights';
     public const PERMISSION_MANAGE_INSIGHTS = 'searchKit:manageInsights';
 
-    public string $schemaVersion = '1.10.0';
+    public string $schemaVersion = '1.11.0';
     public bool $hasCpSection = true;
     public bool $hasCpSettings = false;
 
@@ -77,6 +79,7 @@ class SearchKit extends Plugin
         return [
             'components' => [
                 'analytics' => ['class' => Analytics::class],
+                'dashboardLayouts' => ['class' => DashboardLayouts::class],
                 'documents' => ['class' => Documents::class],
                 'highlighting' => ['class' => Highlighting::class],
                 'indexOperations' => ['class' => IndexOperations::class],
@@ -122,9 +125,12 @@ class SearchKit extends Plugin
         }
 
         $item['label'] = Craft::t('search-kit', 'SearchKit');
-        $item['url'] = 'search-kit';
+
+        // The section itself opens the dashboard, so it is not a subnav item of its own. Without
+        // permission to see it, the section opens the indexes instead.
+        $item['url'] = $this->canViewInsights() ? 'search-kit' : 'search-kit/indexes';
         $item['subnav'] = [
-            'indexes' => ['label' => Craft::t('search-kit', 'Indexes'), 'url' => 'search-kit'],
+            'indexes' => ['label' => Craft::t('search-kit', 'Indexes'), 'url' => 'search-kit/indexes'],
             'rules' => ['label' => Craft::t('search-kit', 'Rules'), 'url' => 'search-kit/rules'],
             'synonyms' => ['label' => Craft::t('search-kit', 'Synonyms'), 'url' => 'search-kit/synonyms'],
         ];
@@ -192,12 +198,14 @@ class SearchKit extends Plugin
     private function registerCpRoutes(): void
     {
         Event::on(UrlManager::class, UrlManager::EVENT_REGISTER_CP_URL_RULES, function(RegisterUrlRulesEvent $event) {
-            $event->rules['search-kit'] = 'search-kit/indexes/index';
+            $event->rules['search-kit'] = 'search-kit/dashboard/index';
+            $event->rules['search-kit/indexes'] = 'search-kit/indexes/index';
             $event->rules['search-kit/indexes/new'] = 'search-kit/indexes/edit';
             $event->rules['search-kit/indexes/<indexId:\d+>'] = 'search-kit/indexes/edit';
             $event->rules['search-kit/rules'] = 'search-kit/rules/index';
             $event->rules['search-kit/rules/new'] = 'search-kit/rules/edit';
             $event->rules['search-kit/rules/<ruleId:\d+>'] = 'search-kit/rules/edit';
+            $event->rules['search-kit/dashboard'] = 'search-kit/dashboard/index';
             $event->rules['search-kit/analytics'] = 'search-kit/analytics/index';
             $event->rules['search-kit/synonyms'] = 'search-kit/synonyms/index';
             $event->rules['search-kit/synonyms/new'] = 'search-kit/synonyms/edit';
@@ -258,6 +266,11 @@ class SearchKit extends Plugin
     public function getAnalytics(): Analytics
     {
         return $this->get('analytics');
+    }
+
+    public function getDashboardLayouts(): DashboardLayouts
+    {
+        return $this->get('dashboardLayouts');
     }
 
     public function getDocuments(): Documents

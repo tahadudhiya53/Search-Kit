@@ -1,0 +1,61 @@
+{% import "search-kit/dashboard/_charts" as chart %}
+
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Search activity over time"|t('search-kit') }}</h2>
+        {% if trend|length %}
+            <span class="light">{{ "Busiest: {count} searches"|t('search-kit', { count: maxSearches|number_format }) }}</span>
+        {% endif %}
+    </div>
+
+    {% if trend|length == 0 %}
+        <p class="zilch">{{ "No search activity for the selected period."|t('search-kit') }}</p>
+    {% else %}
+        <div class="sk-chart">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
+                 aria-label="{{ 'Searches and searches returning no results, from {from} to {to}'|t('search-kit', { from: trend|first.date, to: trend|last.dateEnd }) }}">
+                {% for line in [0, 25, 50, 75, 100] %}
+                    <line class="sk-chart-grid" x1="0" y1="{{ line }}" x2="100" y2="{{ line }}" />
+                {% endfor %}
+                <polygon class="sk-chart-area" points="{{ chart.polyPoints(searchValues, maxSearches, true) }}" />
+                <polyline class="sk-chart-line" points="{{ chart.polyPoints(searchValues, maxSearches, false) }}" />
+                <polyline class="sk-chart-line is-alert" points="{{ chart.polyPoints(zeroValues, maxSearches, false) }}" />
+            </svg>
+            <div class="sk-chart-axis">
+                <span>{{ trend|first.date|date('j M Y') }}</span>
+                <span>{{ trend|last.dateEnd|date('j M Y') }}</span>
+            </div>
+        </div>
+
+        <ul class="sk-legend">
+            <li><span class="sk-swatch"></span>{{ "Searches"|t('search-kit') }}</li>
+            <li><span class="sk-swatch is-alert"></span>{{ "Searches that found nothing"|t('search-kit') }}</li>
+        </ul>
+
+        <details class="sk-data">
+            <summary>{{ "View this chart as a table"|t('search-kit') }}</summary>
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Period"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Searches"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Found nothing"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Average time"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for point in trend %}
+                        <tr>
+                            <th scope="row" class="nowrap">
+                                {{- point.date|date('j M Y') }}{{ point.coversRange() ? ' – ' ~ point.dateEnd|date('j M Y') -}}
+                            </th>
+                            <td class="rightalign">{{ point.searches|number_format }}</td>
+                            <td class="rightalign">{{ point.zeroResults|number_format }}</td>
+                            <td class="rightalign">{{ point.averageTime|number_format(1) }}ms</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+    {% endif %}
+</div>

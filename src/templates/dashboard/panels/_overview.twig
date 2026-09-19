@@ -1,0 +1,32 @@
+<ul class="sk-stats">
+    <li class="sk-stat">
+        <span class="sk-stat-label">{{ "Searches"|t('search-kit') }}</span>
+        <span class="sk-stat-value">{{ summary.totalSearches|number_format }}</span>
+        <span class="sk-stat-note">{{ periodNote }}</span>
+    </li>
+    <li class="sk-stat">
+        <span class="sk-stat-label">{{ "Different things searched for"|t('search-kit') }}</span>
+        <span class="sk-stat-value">{{ summary.uniqueQueries|number_format }}</span>
+        <span class="sk-stat-note">{{ "Counting each wording once"|t('search-kit') }}</span>
+    </li>
+    <li class="sk-stat{{ summary.zeroResultSearches ? ' is-alert' }}">
+        <span class="sk-stat-label">{{ "Searches that found nothing"|t('search-kit') }}</span>
+        <span class="sk-stat-value">{{ (summary.zeroResultRate * 100)|number_format(1) }}%</span>
+        <span class="sk-stat-note">{{ "{count} of {total} searches returned no results"|t('search-kit', { count: summary.zeroResultSearches|number_format, total: summary.totalSearches|number_format }) }}</span>
+    </li>
+    <li class="sk-stat{{ summary.clickedSearches ? ' is-good' }}">
+        <span class="sk-stat-label">{{ "Searches that led to a click"|t('search-kit') }}</span>
+        <span class="sk-stat-value">{{ (summary.clickThroughRate * 100)|number_format(1) }}%</span>
+        <span class="sk-stat-note">{{ "{count} results opened in total"|t('search-kit', { count: summary.clicks|number_format }) }}</span>
+    </li>
+    <li class="sk-stat">
+        <span class="sk-stat-label">{{ "Average time a search took"|t('search-kit') }}</span>
+        <span class="sk-stat-value">{{ summary.averageResponseTime|number_format(1) }}<small>ms</small></span>
+        <span class="sk-stat-note">{{ periodNote }}</span>
+    </li>
+    <li class="sk-stat{{ summary.slowSearches ? ' is-alert' }}">
+        <span class="sk-stat-label">{{ "Slow searches"|t('search-kit') }}</span>
+        <span class="sk-stat-value">{{ summary.slowSearches|number_format }}</span>
+        <span class="sk-stat-note">{{ "Took longer than {threshold}ms, which people notice"|t('search-kit', { threshold: criteria.slowThreshold }) }}</span>
+    </li>
+</ul>

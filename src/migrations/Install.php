@@ -27,6 +27,7 @@ class Install extends Migration
     public function safeDown(): bool
     {
         // Dropped child-first so the foreign keys go with the tables.
+        $this->dropTableIfExists(Table::DASHBOARDLAYOUTS);
         $this->dropTableIfExists(Table::SEARCHCLICKS);
         $this->dropTableIfExists(Table::SEARCHEVENTS);
         $this->dropTableIfExists(Table::RULEACTIONS);
@@ -205,6 +206,15 @@ class Install extends Migration
             'dateCreated' => $this->dateTime()->notNull(),
         ]);
 
+        // How one person arranged their dashboard. One row each: it is a preference, not shared.
+        $this->createTable(Table::DASHBOARDLAYOUTS, [
+            'id' => $this->primaryKey(),
+            'userId' => $this->integer()->notNull(),
+            'layout' => $this->text(),
+            'dateCreated' => $this->dateTime()->notNull(),
+            'dateUpdated' => $this->dateTime()->notNull(),
+            'uid' => $this->uid(),
+        ]);
     }
 
     private function createIndexes(): void
@@ -242,6 +252,8 @@ class Install extends Migration
         // One click per result per search: a second report of the same one cannot inflate a rate.
         $this->createIndex(null, Table::SEARCHCLICKS, ['eventId', 'elementId', 'siteId'], true);
         $this->createIndex(null, Table::SEARCHCLICKS, ['elementId'], false);
+
+        $this->createIndex(null, Table::DASHBOARDLAYOUTS, ['userId'], true);
     }
 
     private function addForeignKeys(): void
@@ -272,5 +284,8 @@ class Install extends Migration
         $this->addForeignKey(null, Table::SEARCHEVENTS, ['indexId'], Table::INDEXES, ['id'], 'CASCADE', null);
         $this->addForeignKey(null, Table::SEARCHEVENTS, ['siteId'], CraftTable::SITES, ['id'], 'CASCADE', null);
         $this->addForeignKey(null, Table::SEARCHCLICKS, ['eventId'], Table::SEARCHEVENTS, ['id'], 'CASCADE', null);
+
+        // An arrangement belongs to one person and goes when they do.
+        $this->addForeignKey(null, Table::DASHBOARDLAYOUTS, ['userId'], CraftTable::USERS, ['id'], 'CASCADE', null);
     }
 }

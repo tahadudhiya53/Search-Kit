@@ -1,0 +1,29 @@
+{% import "search-kit/dashboard/_charts" as chart %}
+
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Queries returning no results"|t('search-kit') }}</h2>
+    </div>
+    <p class="light sk-hint">{{ "Worth adding content for, or a synonym or rule to point somewhere useful."|t('search-kit') }}</p>
+
+    {% if zeroResultQueries is empty %}
+        <p class="zilch">{{ "No zero-result searches in this period."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Query"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Searches"|t('search-kit') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for insight in zeroResultQueries %}
+                    <tr>
+                        <th scope="row">{{ chart.queryCell(insight.query) }}</th>
+                        <td class="rightalign">{{ insight.searches|number_format }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
