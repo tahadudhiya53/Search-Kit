@@ -1,0 +1,31 @@
+{% import "search-kit/dashboard/_charts" as chart %}
+
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Queries nothing came of"|t('search-kit') }}</h2>
+    </div>
+    <p class="light sk-hint">{{ "Searched at least {count} times in this period, with no result ever opened."|t('search-kit', { count: minSearches }) }}</p>
+
+    {% if unopenedQueries is empty %}
+        <p class="zilch">{{ "Every query searched for more than once led somewhere."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Query"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Searches"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Found nothing"|t('search-kit') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for insight in unopenedQueries %}
+                    <tr>
+                        <th scope="row">{{ chart.queryCell(insight.query) }}</th>
+                        <td class="rightalign">{{ insight.searches|number_format }}</td>
+                        <td class="rightalign">{{ (insight.zeroResultRate * 100)|number_format(0) }}%</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>

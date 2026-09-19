@@ -18,6 +18,9 @@ class StubProvider extends SearchProvider
     public array $supported = [ProviderCapability::Search];
 
     public ?SearchQuery $receivedQuery = null;
+
+    /** @var SearchQuery[] Every query this provider was asked, in order. */
+    public array $receivedQueries = [];
     public ?SearchIndex $receivedIndex = null;
     public ?Throwable $failWith = null;
     public SearchResult $result;
@@ -40,6 +43,7 @@ class StubProvider extends SearchProvider
         }
 
         $this->receivedQuery = $query;
+        $this->receivedQueries[] = clone $query;
         $this->receivedIndex = $index;
 
         return $this->result;

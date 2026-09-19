@@ -8,9 +8,16 @@ Search management and intelligence for Craft CMS.
 Craft content. It provides search providers behind a single interface, provider-independent query,
 result and document objects, database-backed search indexes and searchable field configuration, a
 search service that runs a query through an index's provider, filtering, sorting, pagination,
-snippets and highlighting, and queue-backed indexing that follows every content change. Indexes are
-managed from the control panel or from PHP. A provider backed by Craft's own search index ships
-with it.
+snippets and highlighting, and queue-backed indexing that follows every content change. What a
+visitor types goes through a query pipeline of its own — normalization, operators, stop words,
+synonyms and typo correction — and a search that finds nothing offers something else to try. Search
+rules give deliberate control over what a particular query returns: boost, bury, hide, pin, promote
+and redirect, on a schedule and in a fixed priority order. Every search can be recorded — what was
+searched for, what came back and what was opened, and nothing about who searched — and read back as
+popular queries, zero-result queries, content gaps, trends and response times, on a control panel
+dashboard that shows how search is doing at a glance. Indexes, rules, synonyms, search behaviour and
+what is recorded are managed from the control panel or from PHP. A provider backed by Craft's own
+search index ships with it.
 
 See [Limitations](#limitations) for what is not there yet.
 
@@ -25,8 +32,17 @@ A search index is a database record: a name, a handle, the provider serving it, 
 fields it is configured with, each carrying a weight. A search runs like this:
 
 ```
-SearchQuery → Search service → search provider → SearchResult
+SearchQuery → query pipeline → search provider → SearchResult
 ```
+
+The pipeline is where everything a query *means* is settled, in one place and in this order:
+
+```
+raw text → normalization → operators and tokens → stop words → synonyms → terms
+```
+
+A provider is only ever handed terms. It never has to read search syntax of its own, and nothing a
+visitor types is used to build a query by hand.
 
 Queries and results are SearchKit's own types, so no search engine's request or response format
 reaches the rest of the plugin. Providers declare what they can do, and SearchKit rejects a query
@@ -47,9 +63,15 @@ The bundled provider searches Craft's own search index, so SearchKit works witho
 service. Craft scores results itself, which sets real limits on what this provider can honour:
 
 - It searches, indexes, filters and sorts, using Craft's own element query criteria, field
-  conditions and sort options. It cannot weight fields or highlight, so a query asking for either
-  is rejected rather than quietly run without it — highlighting is instead worked out by SearchKit
-  itself, as described under [Snippets and highlighting](#snippets-and-highlighting).
+  conditions and sort options. It also honours phrases, exclusions, alternation and partial
+  matching, which it expresses through Craft's own search syntax rather than through SQL of
+  SearchKit's making.
+- It cannot weight fields or highlight, so a query asking for either is rejected rather than
+  quietly run without it — highlighting is instead worked out by SearchKit itself, as described
+  under [Snippets and highlighting](#snippets-and-highlighting).
+- **It has no typo tolerance of its own**, so SearchKit corrects for it, as described under
+  [Typo tolerance](#typo-tolerance). A provider that declares the capability keeps its own answer
+  and SearchKit stays out of the way.
 - **A score is only reported when results are ranked by relevance.** Craft works one out while
   ordering by `score`; order by anything else and every hit's score is `0`.
 - **Searchable fields do not narrow what it searches.** It uses their element types to decide which
@@ -127,6 +149,10 @@ of one, since that is how request parameters arrive — `'2'` is a page number, 
 each have two plausible readings, and PHP's own answer is not the one a template would expect.
 `status` takes a non-empty string, and a status no element type in the index has is refused rather
 than quietly matching nothing.
+
+How the query *text* is read — operators, partial matching, stop words, synonyms and typo tolerance
+— is not a query parameter. It belongs to the index, so every search of one behaves the same way.
+See [Search experience](#search-experience).
 
 Anything else is rejected, as is a blank query, a filter value that is empty or cannot be compared,
 an unknown operator and a limit beyond the maximum. Invalid input raises an exception rather than
@@ -222,19 +248,463 @@ a multiple of `limit`. Every page of one search reports the same `total`, becaus
 return is decided before it runs rather than by dropping results from a page. On an all-site index each site's copy of an element is its own result, since
 each one is a separate thing to link to.
 
-`provider`, `metadata` and a hit's `providerData` are diagnostics: they report what happened to run
-the search, and are not part of the stable result contract.
+A result also carries `correctedText` and `wasCorrected` when the query was corrected before it
+ran, `suggestions` and `hasSuggestions` when it found nothing, and `parsedQuery` — the terms it was
+produced from, which is what a ranking explanation will eventually be built from.
+
+`provider`, `metadata`, `parsedQuery` and a hit's `providerData` are diagnostics: they report what
+happened to run the search, and are not part of the stable result contract.
+
+## Search experience
+
+How a query is read is configured per index, under **Search behaviour** on the index's page. None
+of it changes what is indexed, so changing any of it never costs a rebuild.
+
+Settings are checked rather than coerced, exactly as search parameters are: `"maybe"` is not a
+boolean, `"12.7"` is not a whole number, and a matching mode that does not exist is refused. An
+unusable value is reported as an error rather than saved as something else.
+
+### Normalization
+
+Query text and indexed content go through Craft's own keyword normalization: lowercased, stripped
+of markup, punctuation, diacritics and emoji, with whitespace collapsed. Both sides are reduced the
+same way, so `Café` finds `cafe` and SearchKit never disagrees with what Craft indexed.
+
+### Operators
+
+With **Search operators** on — the default — these are read in what a visitor types:
+
+| Written | Means |
+|---|---|
+| `winter boots` | Both words have to match. |
+| `"winter boots"` | The words have to appear together, in that order. |
+| `"boot"` | That word and nothing longer, whatever partial matching is set to. |
+| `-leather` | Rules out anything matching it. |
+| `boots OR shoes` | Either one is enough. Each side keeps its own matching. |
+| `boot*` | Matches from the start of a word. |
+| `*boot*` | Matches anywhere in a word. |
+
+That is the whole set. Each one can be expressed consistently, so a provider either honours it or
+says it cannot — a query is never quietly run as something else.
+
+- A leading wildcard on its own (`*boot`) is read as `*boot*`, since matching only the end of a word
+  is something few engines can answer.
+- Phrases use double quotes; an apostrophe is just a character. An unclosed quote is read as text.
+- `OR` is only `OR` in capitals, between two terms. With nothing on one side it is dropped.
+- **`-` and `OR` cannot be combined.** `boots OR -leather` is rejected rather than guessed at: one
+  reading searches for something to exclude, the other excludes one of two alternatives, and
+  quietly picking either would run a different search from the one written. Write the exclusion as
+  its own term — `boots OR shoes -leather` — which does exactly what it looks like.
+- A query that only rules things out is rejected, because it has nothing to look for.
+- Anything else that is not valid syntax is read as text rather than failing.
+
+Turn operators off and every word is searched for exactly as written, punctuation and all.
+
+### Partial matching
+
+**Partial matching** decides how much of a word a term has to cover when no operator says
+otherwise: whole words only, the start of a word (the default), or anywhere in a word. Terms
+shorter than **Shortest partial match** are matched whole, so a two-letter word does not match
+everything. Exclusions are always matched whole — ruling results out on part of a word is rarely
+what anyone means.
+
+### Stop words
+
+Words too common to narrow anything down are dropped from a query. The built-in list is short and
+English; **Extra stop words** adds to it. A query made of nothing but stop words is left alone
+rather than emptied, so searching for `the who` still searches for something.
+
+### Synonyms
+
+A synonym makes a search for one word find the others as well. They are managed under
+**SearchKit → Synonyms**, and each group covers one index or all of them, and one site or all of
+them.
+
+| Type | Behaviour |
+|---|---|
+| Two-way | Every term stands in for the others. `boots, footwear, shoes` — any of them finds all of them. |
+| One-way | The terms also search for the replacements, never the other way around. `tv → television`. |
+
+A term may be a word or a phrase, and is normalized on save exactly as indexed content is, so a
+synonym cannot fail to match over a capital letter or an accent. Synonyms are configuration rather
+than something a query asked for, so a provider that cannot offer alternatives simply goes without
+them instead of refusing the search. Groups are cached, and a save or delete is visible to the very
+next search.
+
+### Typo tolerance
+
+This is spelling correction, not a fuzzy ranking algorithm: a search that finds **nothing** is tried
+again against the words the index actually holds. Each word the index has never seen is replaced by
+the closest one it has, within **Edits allowed** edits, and the search is run once more. An edit is
+an insertion, a deletion, a substitution, or a swap of two neighbouring characters — `form` and
+`from` are one edit apart. Any character can be corrected, including the first.
+
+If the retry finds something, the result says what was searched for instead:
+
+```twig
+{% if results.wasCorrected %}
+    <p>{{ "Showing results for"|t }} <em>{{ results.correctedText }}</em></p>
+{% endif %}
+```
+
+If it finds nothing either, the search stands as it was asked. Correction never runs on a search
+that found something, so a working search pays nothing for it. Words shorter than **Shortest word
+corrected** are left alone, since a short word is rarely a typo, and edits are counted in characters
+rather than bytes.
+
+Phrases, alternations and exclusions are never corrected. The first two already say what they
+accept, and quietly widening what a search rules out would change what it means.
+
+Which word wins is decided the same way every time: the closest one, then the shortest, then the
+first alphabetically. Every word the index holds that is close enough is weighed — nothing is cut
+off at an arbitrary number of candidates.
+
+### Suggestions and autocomplete
+
+Both are drawn from the words an index holds, so a suggestion can never lead to another empty result
+and never names content the person searching may not see. A search that found nothing carries them:
+
+```twig
+{% for suggestion in results.suggestions %}
+    <a href="?q={{ suggestion|url_encode }}">{{ suggestion }}</a>
+{% endfor %}
+```
+
+Autocomplete completes what has been typed so far, keeping everything before the last word. It runs
+no search at all, so it is cheap enough to call while someone types, and its answers are cached:
+
+```twig
+{% set completions = craft.searchKit.autocomplete('siteSearch', q, { limit: 5 }) %}
+```
+
+`craft.searchKit.suggest('siteSearch', q)` asks for the same alternatives without running a search.
+
+### The words an index holds
+
+These come from the content SearchKit indexes. Each word is recorded against the document it was
+read from, so the list follows the content:
+
+| What happens to a document | What happens to its words |
+|---|---|
+| It is indexed | Its words are recorded for that index and site. |
+| It is changed | Words it no longer uses go; words it now uses appear. |
+| It is deleted | Its words go, unless another document also uses them. |
+| It is restored | Its words come back. |
+| Indexing it fails | Nothing is settled: the work stays outstanding and is retried, so the words are never left describing a document the provider does not hold. |
+| The index is rebuilt | The whole list is rebuilt from the content itself. |
+
+A word several documents use survives until the last of them stops using it.
+
+**Suggestions only ever name published content.** Before a word is completed, corrected to, or
+offered, SearchKit checks that a document anybody may find still uses it — Craft's own definition of
+published, asked of the element itself. A word that only a draft, a disabled entry, one that is not
+posted yet, one that has expired, or one that has been deleted uses is never offered, to anybody.
+That applies to administrators too: unpublished content is searched for deliberately, by status, not
+stumbled upon through a completion.
+
+Every document using a word is checked until one of them proves the word may be shown, so a word
+buried under any number of hidden documents is still offered. The same goes for a correction and for
+completions: candidates are read a batch at a time until there are enough that may be shown, or the
+index runs out. Nothing is cut short by a fixed sample.
+
+Content that becomes published or expires with the clock, rather than through a save, is picked up
+when the cached answer expires — within five minutes. A word appearing or disappearing through
+indexing is visible to the very next lookup.
+
+There is no notion of a popular word: ordering is by how little a suggestion changes what was typed,
+shortest first. Nothing about what visitors search for is recorded.
 
 ### Snippets and highlighting
 
 With `highlight: true`, each hit reports the fields it matched on, a plain-text `snippet` cut around
-the first match, and a `highlight` — the same excerpt with matched terms wrapped in `<mark>`. Both
-are also available per field: `hit.getSnippet('body')`.
+the matches, and a `highlight` — the same excerpt with matched terms wrapped in `<mark>`. Both are
+also available per field: `hit.getSnippet('body')`.
+
+A value long enough to hold several matches shows up to three excerpts, joined by an ellipsis, so a
+snippet reflects why the whole value matched rather than only where it first did. Excerpts are cut
+at word boundaries, phrases are marked as one rather than word by word, and terms are marked
+whatever the pipeline made of them — a corrected word is marked as corrected, and a synonym is
+marked where it matched. Excluded terms are never marked.
 
 Excerpts come from the values the index is configured to search, so they work whatever is serving
 the index; a provider that highlights for itself keeps its own answer. Text is escaped before the
 marks go in, so `{{ hit.highlight }}` needs no `|raw` and indexed content cannot carry markup into a
 page. It is off by default because it reads each hit's content.
+
+## Search rules
+
+A rule is deliberate control over what one search returns. It belongs to one index, optionally to
+one site, and is triggered by the query text: *is exactly*, *contains*, *starts with*, *ends with*,
+or a pattern where `*` stands for any run of characters. Query text and rule text are normalized the
+same way, so a rule written “iPhone” governs a search for “iphone”. Patterns are wildcards, never
+regular expressions.
+
+A matching rule can do any of these:
+
+| Action | What it does |
+|---|---|
+| Boost | Moves a result up the ones the search already found. |
+| Bury | Moves a result down. |
+| Hide | Leaves a result out entirely. |
+| Pin | Places a result at a fixed position, whether or not the search found it. |
+| Promote | Puts a result near the top, whether or not the search found it. |
+| Redirect | Offers somewhere the search should be sent instead. |
+
+Rules are applied in a fixed order: **highest priority first, and oldest first within a priority.**
+From that, two precedence rules settle everything:
+
+1. **The first rule to claim a result decides its fate.** Hiding, pinning and promoting are
+   exclusive — whichever of them reaches a result first wins, and every later rule that names the
+   same result is refused and says so. A hide does not override a pin from a higher-priority rule,
+   and a pin does not override a higher-priority hide; priority alone decides.
+2. **Boosts and buries accumulate**, but only on results no rule claimed. They add up across every
+   matching rule, and addition settles the same way in any order, so two rules moving one result
+   never disagree. A result that was hidden, pinned or promoted is not ranked by its score any more,
+   so an adjustment on it is recorded as superseded rather than silently applied.
+
+Two pins cannot share a position — the first claim keeps it. Only the highest-priority applicable
+redirect is offered. The same rules over the same content always produce the same order.
+
+Precedence is settled **per site**. A rule naming a site claims only that site's copy of a result; a
+rule naming none claims every site it has not already lost. So a site rule that outranks a global one
+keeps its own site while the global rule still governs the rest, and a global rule that outranks a
+site rule decides every site. A rule for one site never blocks a rule for another.
+
+A rule may carry a start date, an end date, or both, and can be switched off without deleting it.
+Dates are entered in Craft's system timezone — the one `timezone` is set to, shown next to the field
+— and held in UTC, so a schedule means the moment it was given wherever it is read. Both ends are
+inclusive. Craft has no per-site timezone, so neither does a schedule.
+
+### How rules reach the results
+
+Hidden, pinned and promoted results are left out of the search itself — the provider is asked not to
+return them — and the placed ones are then put back at their own positions. That is what makes the
+behaviour exact rather than best-effort:
+
+- A hidden result cannot appear on any page, however far down the ranking it sat. It is not counted
+  either, so the total describes the results a visitor can actually reach.
+- A placed result appears exactly once and is counted exactly once, whether or not the search would
+  have found it on its own.
+- Pagination stays consistent: every page together holds each result once.
+
+This needs the provider to support result exclusion. A provider that cannot is refused rather than
+hiding only what it happened to read.
+
+Boosting and burying work the same way: the results a rule moves are held back from the ranked list
+and asked for by name, so a boost lifts a result onto the first page however far down it ranked, and
+a bury pushes one off it. They are moved at the score the search itself gave them, and a result the
+search never matched is not added by a boost — moving a result never invents one.
+
+Reordering does still need every result above the page in hand, so past the first 1000 results the
+page is read straight and the adjustment is recorded as skipped rather than applied to the wrong
+results. Score adjustments are also skipped when the search supplies its own `orderBy` — relevance is
+not deciding the order then, so a score nudge would mean nothing. Pins, promotions, hides and
+redirects apply either way.
+
+### Sites
+
+A rule belongs to one index and may name one site. A rule that names a site only ever affects that
+site's results, including on a search covering every site — the same entry in another site is left
+alone. A rule that names no site applies in every site the search covers.
+
+Pinning and promoting put a result somewhere in particular, so they need one site to put it in: the
+rule's site, or the index's when the index covers only one. On an index covering every site, a rule
+must name a site before it can place results, since which site's version to place would otherwise be
+a guess. Nothing falls back to the primary site.
+
+A rule may only name a site its index covers, and every target is checked when the rule is saved: it
+must exist, be a real element type, be a type the rule's index actually searches, be reachable in the
+rule's site, and not be in the trash. Nothing a control panel form posts is trusted. If the index
+later stops searching a kind of result, rules naming one stop acting on it.
+
+### What a placed result may show
+
+A rule may name content that is published today and a draft tomorrow, so **what a viewer may see is
+settled every time the search runs**, never when the rule was saved. A pinned or promoted result is
+loaded and authorized exactly like one the search found itself:
+
+- It is loaded under the same status the search ran with, so a result that is disabled, not yet
+  posted, expired, disabled for the site being searched, or in the trash is not returned — to
+  anybody, administrators included.
+- Where SearchKit applies Craft's `canView()` — on any search of something other than published
+  content — a placed result is put to it with all the others.
+- A placed result that is withheld is taken off the total on the page it would have appeared on. On
+  a page far enough in that the placed results all sit above it, the total still counts it — see
+  [Limitations](#limitations).
+- The explanation on `results.rules` is settled against what was shown: a placement that was withheld
+  is reported as `notViewable` rather than as applied, and **the withheld result's ID is not named**,
+  so nothing identifies content the viewer was not allowed to see.
+
+A rule is a way to arrange results, never a way around the visibility policy.
+
+A redirect sends the whole search somewhere, so it may only come from a rule whose site covers the
+whole search: a rule naming one site redirects a search of that site alone, and never a search
+covering every site. Only the highest-priority applicable redirect is offered.
+
+A redirect is offered, not performed: the search still runs, and the template decides.
+
+```twig
+{% set results = craft.searchKit.search('siteSearch', query) %}
+
+{% if results.redirect %}
+    {% redirect results.redirect %}
+{% endif %}
+
+{% for hit in results.hits %}
+    {% if hit.pinned or hit.promoted %}<span class="featured">Featured</span>{% endif %}
+    ...
+{% endfor %}
+```
+
+Every search carries what each rule did, matched or not, on `results.rules` — its priority, match
+type and value, site scope, whether it matched and why not, and for each action whether it applied
+and which rule superseded it. What happened to a particular result is on `hit.ruleEffects`.
+`hit.score` stays the provider's own score; `hit.scoreAdjustment` is what the rules moved it by, and
+`hit.finalScore` is what it was ranked by.
+
+### Rules and corrected queries
+
+A search that finds nothing is retried against a correction of what was typed. **Rules are matched
+against the query that actually ran** — so on a corrected search, that is the corrected text, and the
+rules are read again against it before anything is arranged. Write rules against the spelling you
+want them to govern. A rule written for a misspelling still governs for as long as that misspelling
+finds results, because nothing is corrected then. A provider that tolerates typos itself never
+reports a correction, so rules there are matched against what the visitor typed.
+
+A search whose rules place results is never corrected: placed results are held back from the provider
+while it searches, so an empty answer from it does not mean the search found nothing.
+
+## Search activity
+
+SearchKit records what is searched for, so the searches that fail and the content nobody can find
+are visible rather than guessed at.
+
+Nothing recorded identifies who searched. There is no account, no address, no session and no
+identifier of any kind on a recorded search — only the search itself:
+
+```
+query · normalized query · corrected query · index · site · language
+result count · response time · results opened · when
+```
+
+The query is kept twice: once exactly as it was typed, and once reduced the way the index reduces
+it. Queries group on the reduced form, so `Winter Boots` and `winter  boots` are one query, while
+what was actually typed is still there to read.
+
+Recording is a listener on the search event, not a step inside the search. A search costs one
+insert to record, and a search that cannot be recorded still returns its results.
+
+### What each index records
+
+Each index decides for itself, on its edit page:
+
+| Setting | What it does |
+|---|---|
+| Record searches | Whether searches of this index are recorded at all |
+| Record opened results | Whether a result someone opened can be tied back to the search that found it |
+| Kept for | Days a recorded search is kept, after which it is deleted |
+| Slow search | Milliseconds beyond which a search counts as slow |
+
+There is no “keep everything”: retention is always a number of days, enforced by Craft’s own
+garbage collection, which `php craft gc` runs on demand.
+
+### Associating a click
+
+A recorded search hands back a token. Post it with the result that was opened and the two are tied
+together — the token is the only link, and it identifies the search, never the person:
+
+```twig
+{% set results = craft.searchKit.search('site', query) %}
+
+{% for hit in results.hits %}
+    <a href="{{ hit.element.url }}">{{ hit.element.title }}</a>
+
+    {% if results.isTracked() %}
+        <form method="post" class="searchkit-click">
+            {{ csrfInput() }}
+            {{ actionInput('search-kit/analytics/click') }}
+            {{ hiddenInput('token', results.trackingToken) }}
+            {{ hiddenInput('elementId', hit.elementId) }}
+            {{ hiddenInput('siteId', hit.siteId) }}
+        </form>
+    {% endif %}
+{% endfor %}
+```
+
+Nothing posted is trusted. A recorded search remembers which results it returned — the element and
+the site each of them named — and a click is only accepted when it names one of them. So the token
+has to belong to a search from the last 24 hours, that search has to have returned *this* result in
+*this* site, and the element has to still exist. A result from another site, a result the search
+never returned, one past the window it returned, an element since deleted, and an invented or
+expired token are all refused.
+
+Where the result sat is read from the search rather than posted, so which result it was is the only
+thing a page reports. The same result reported twice for one search is counted once, so a reload
+cannot inflate a rate.
+
+A search remembers at most its first 100 results for this purpose, and remembers none at all when
+the index does not follow clicks, so a wide result window cannot turn one search into unbounded
+storage.
+
+### Reading it back
+
+```php
+use Tahadudhiya\SearchKit\SearchKit;
+use Tahadudhiya\SearchKit\models\InsightsCriteria;
+
+$insights = SearchKit::getInstance()->getInsights();
+$criteria = new InsightsCriteria(['indexId' => $index->id, 'dateFrom' => new DateTime('-30 days')]);
+// dateFrom is inclusive and dateTo is exclusive, so a whole day can be asked for by its two ends.
+
+$insights->getSummary($criteria);            // totals, rates and response time
+$insights->getPopularQueries($criteria);     // what people search for most
+$insights->getZeroResultQueries($criteria);  // what comes back with nothing
+$insights->getContentGaps($criteria);        // searched for repeatedly, nothing ever opened
+$insights->getSlowQueries($criteria);        // the ones past what the index calls slow
+$insights->getTrend($criteria);              // day by day, optionally for one query
+$insights->getClickedResults($criteria);     // the results people opened most
+$insights->getRecentSearches($criteria);     // the searches themselves
+```
+
+Every reading is one grouped query over an indexed date range, and is reused for up to five minutes
+— but only while nothing new has been recorded. A search or an opened result makes every page read
+it again, so opening a page never costs a scan of the whole table and no two pages can disagree
+about what has happened. Rates are counted on searches rather than on
+clicks: a click-through rate is the share of searches that led to something being opened, however
+many results were opened.
+
+### Dashboard
+
+The **SearchKit** section itself opens the dashboard, which puts all of this on one page for
+whoever may view search activity. Without that permission it opens the indexes instead.
+
+| Section | What it shows |
+|---|---|
+| Overview | Searches, different things searched for, the share that found nothing, the share that led to a click, average response time, and how many searches were slow |
+| Search activity over time | Searches and zero-result searches day by day, with the same figures as a table |
+| Search outcomes | How much of the period found results, found nothing, or led to a click |
+| Most searched for | The queries people search for most, with their zero-result and click-through rates |
+| Queries returning no results | What came back with nothing, most often first |
+| Most opened results | The results people clicked through to, and where in the results they were |
+| Queries nothing came of | Searched at least twice in the period with no result ever opened |
+| Performance | Average response time over the period, and the queries averaging slower than the index calls slow |
+| Search health | Every index: whether it is serving, its provider, its site scope and what it records |
+
+Everything on the page reads the same index, site and date filters, with presets for the last 7, 30
+and 90 days. The dates mean the same thing they do everywhere else in SearchKit: the day chosen at
+the far end is counted in full. A site filter counts searches of that site alone.
+
+**Arranging it.** *Arrange panels* turns on a mode where each panel can be dragged by its bar into
+any place on the grid, set to take one, two, three or four of the dashboard's columns, or put away
+altogether — and brought back from the bar of panels you have put away, which sits with the
+filters. An arrangement belongs to the
+person who made it: nobody else's dashboard moves, and it decides nothing about what anybody is
+allowed to see. *Reset to the default arrangement* puts it back. Dragging needs JavaScript;
+everything else works without it.
+
+Each section says so plainly when there is nothing to show, and a reading that cannot be taken
+leaves the rest of the page standing. The charts are drawn as plain SVG — no chart library, no
+JavaScript — and everything a chart says is also written out as a figure or a table beside it.
 
 ## Indexing
 
@@ -333,6 +803,7 @@ the status API and on the command line. These count as changes:
 | Re-enabling a disabled index | yes |
 | Disabling an index | no |
 | Renaming an index | no |
+| Search behaviour, or synonyms | no |
 
 Saving a configuration is a short database transaction; it never waits for a running rebuild.
 SearchKit does not rebuild by itself: rebuilding can be expensive, so it is left as a deliberate
@@ -345,12 +816,26 @@ changes are not tracked while it is off, which is why switching it back on marks
 
 ### Control panel
 
-**SearchKit** in the control panel lists indexes with their pending and failed counts, when they
-were last indexed and whether they are current, and lets you create, edit, enable, disable and
-delete indexes, choose their searchable fields and weights, rebuild them, and retry failed
-operations. An index is only shown as current when it is enabled, nothing is outstanding, nothing
-has failed, no rebuild is owed and the provider says it can serve. Three permissions govern it: viewing indexes,
-managing them, and rebuilding or retrying.
+**SearchKit → Indexes** lists indexes with their pending and failed counts, when they were last
+indexed and whether they are current, and lets you create, edit, enable, disable and delete
+indexes, choose their searchable fields and weights, set how queries against them are read,
+rebuild them, and retry failed operations. An index is only shown as current when it is enabled,
+nothing is outstanding, nothing has failed, no rebuild is owed and the provider says it can serve.
+
+**SearchKit → Rules** lists and edits search rules: the query that triggers them, what they do to
+the results, their schedule and their priority.
+
+**SearchKit → Synonyms** lists and edits synonym groups.
+
+**SearchKit → Search activity** lists recorded searches, filtered by index, site and date range,
+with the totals for whatever is being shown. A date range covers the whole of both days it names.
+Deleting from that page forgets every search recorded for the selected index, or for every index —
+it is not limited by the dates or the site being shown, and says so.
+
+Six permissions govern all of it: viewing, managing indexes, rebuilding or retrying, managing
+rules, viewing search activity and deleting it. Synonyms and search behaviour are managed under the
+same permission as the indexes they belong to; rules and search activity have their own, so
+merchandising and measurement can each be delegated without handing over index configuration.
 
 ### Commands
 
@@ -363,15 +848,43 @@ php craft search-kit/index/retry <handle>    # put failed operations back in the
 
 ## Limitations
 
-These do not exist yet. They are the intended direction of the plugin, not a description of what it
-currently does.
+What SearchKit does not do yet, and the limits of what it does.
 
 - Only entries, categories, assets and users are offered as indexable element types.
 - Only the Craft provider ships, with the constraints described above — including that it shares
   Craft's single search index rather than giving each SearchKit index its own store.
 - A rebuild is never started automatically after a configuration change; it is reported as owed.
-- No faceting, fuzzy matching, typo tolerance, synonyms or autocomplete.
-- No search rules, merchandising, analytics, or debugger.
+- Suggestions describe published content only, for everybody. There is no way to complete or
+  correct against unpublished content, even as an administrator.
+- The built-in stop word list is English. Any other language needs its own words configured.
+- `-` and `OR` cannot be combined in one term; the query is refused rather than reinterpreted.
+- Suggestions are ranked by how little they change what was typed. Recorded search activity is not
+  used to rank them, so nothing knows what is popular.
+- No faceting or field-scoped search.
+- A rule's boost or bury amount is shared by every result it moves; different amounts for different
+  results need one rule each. A rule's results are chosen only after it has been saved with an index
+  and, on an index covering every site, a site — both decide what there is to choose from.
+- Boosting and burying are skipped past the first 1000 results, where reordering would need more of
+  the ranking than is affordable to read; it is recorded rather than applied to the wrong page.
+  Which results are hidden, pinned, promoted or redirected is decided the same way at any depth.
+- A placed result that has stopped being viewable since its rule was saved is withheld from every
+  page, but the total only stops counting it on the page it would have appeared on. On other pages
+  the total is one too high. Counting it correctly everywhere would mean loading and authorizing
+  placed results on every page, including the ones they never appear on.
+- A rule that boosts or buries costs one extra search, to fetch the results it moves. Rules that only
+  hide, pin, promote or redirect cost nothing extra.
+- Search activity is counted by UTC day, whatever timezone the site runs in.
+- A click has to be reported by the page showing the results; nothing is tracked automatically, and
+  a result opened more than 24 hours after the search that found it is not associated with it.
+- A click on a result past the first 100 a search returned is not associated with that search.
+- Recorded searches are deleted for a whole index at a time. There is no way to delete only part of
+  what was recorded, other than waiting for retention to reach it.
+- The dashboard filters by index, site and date range. There is no filtering by query, and no
+  comparison against a previous period.
+- Dashboard tables show the top few rows of each metric. Longer listings are readable from PHP.
+- The dashboard has a fixed set of panels: they can be arranged, resized and put away, but not
+  configured, duplicated or added to.
+- No debugger.
 
 ## Local development
 

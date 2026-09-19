@@ -1,0 +1,31 @@
+{% import "search-kit/dashboard/_charts" as chart %}
+
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Slowest queries"|t('search-kit') }}</h2>
+    </div>
+    <p class="light sk-hint">{{ "Averaging more than {threshold}ms."|t('search-kit', { threshold: criteria.slowThreshold }) }}</p>
+
+    {% if slowQueries is empty %}
+        <p class="zilch">{{ "No slow searches recorded in this period."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Query"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Searches"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Average time"|t('search-kit') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for insight in slowQueries %}
+                    <tr>
+                        <th scope="row">{{ chart.queryCell(insight.query) }}</th>
+                        <td class="rightalign">{{ insight.searches|number_format }}</td>
+                        <td class="rightalign error">{{ insight.averageTime|number_format(1) }}ms</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>

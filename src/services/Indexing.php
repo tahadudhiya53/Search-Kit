@@ -46,6 +46,8 @@ class Indexing extends Component
     private ?Providers $_providers = null;
     private ?Documents $_documents = null;
     private ?IndexOperations $_operations = null;
+    private ?Terms $_terms = null;
+    private ?Normalization $_normalization = null;
 
     /**
      * Content changes must never break saving an element, so nothing here is allowed to escape.
@@ -58,6 +60,7 @@ class Indexing extends Component
     public function handleElementDelete(ElementInterface $element): void
     {
         $this->track($element, IndexOperationType::Delete);
+        $this->forgetTerms($element);
     }
 
     public function handleElementRestore(ElementInterface $element): void
@@ -277,6 +280,10 @@ class Indexing extends Component
             $provider->rebuild($index);
         }
 
+        // The words the index held were drawn from content this walk is about to replace, so they
+        // are dropped first: a rebuild is the only thing that can tell which of them are still real.
+        $this->getTerms()->clear((int)$index->id);
+
         $scopes = $this->rebuildScopes($index);
         $result = new IndexingResult();
 
@@ -380,6 +387,8 @@ class Indexing extends Component
 
         try {
             if ($operation->operation === IndexOperationType::Delete) {
+                $this->getTerms()->forgetDocument($operation->elementId, $operation->siteId, (int)$index->id);
+
                 $provider->deleteDocument($index, SearchDocument::forDeletion(
                     $operation->elementId,
                     $operation->siteId,
@@ -396,12 +405,14 @@ class Indexing extends Component
             $element = Craft::$app->getElements()->getElementById($operation->elementId, $elementType, $operation->siteId);
 
             // Gone before the queue got to it, or carrying nothing this index is configured for.
-            if ($element !== null) {
-                $document = $this->getDocuments()->buildDocument($index, $element);
+            $document = $element !== null ? $this->getDocuments()->buildDocument($index, $element) : null;
 
-                if (!$document->isEmpty()) {
-                    $provider->indexDocument($index, $document);
-                }
+            if ($document !== null && !$document->isEmpty()) {
+                $provider->indexDocument($index, $document);
+                $this->recordTerms($index, $document);
+            } else {
+                // Either way it contributes no words now, so whatever it contributed before goes.
+                $this->getTerms()->forgetDocument($operation->elementId, $operation->siteId, (int)$index->id);
             }
 
             $this->getOperations()->release($operation);
@@ -420,9 +431,12 @@ class Indexing extends Component
         try {
             $document = $this->getDocuments()->buildDocument($index, $element);
 
-            if (!$document->isEmpty()) {
-                $provider->indexDocument($index, $document);
+            if ($document->isEmpty()) {
+                return true;
             }
+
+            $provider->indexDocument($index, $document);
+            $this->recordTerms($index, $document);
 
             return true;
         } catch (Throwable $e) {
@@ -440,6 +454,48 @@ class Indexing extends Component
             );
 
             return false;
+        }
+    }
+
+    /**
+     * Keeps the words behind completions and corrections, replacing whatever this document
+     * contributed before. A failure here is a real failure: the provider now holds a document the
+     * dictionary does not describe, so the operation stays outstanding and is retried rather than
+     * being settled on a half-finished write.
+     */
+    private function recordTerms(SearchIndex $index, SearchDocument $document): void
+    {
+        $terms = [];
+
+        foreach ($document->getFields() as $value) {
+            foreach ($this->getNormalization()->terms($value) as $term) {
+                $terms[] = $term;
+            }
+        }
+
+        $this->getTerms()->record(
+            (int)$index->id,
+            $document->elementId,
+            $document->siteId,
+            $document->elementType,
+            $terms,
+        );
+    }
+
+    /**
+     * An element that has gone contributes no words to any index, whether or not its provider has
+     * anything to delete — the words are SearchKit's own, not the provider's.
+     */
+    private function forgetTerms(ElementInterface $element): void
+    {
+        try {
+            if ($element->id === null || $element->siteId === null || ElementHelper::isDraftOrRevision($element)) {
+                return;
+            }
+
+            $this->getTerms()->forgetDocument((int)$element->id, (int)$element->siteId);
+        } catch (Throwable $e) {
+            Craft::error("Could not forget the words of element {$element->id}: {$e->getMessage()}", SearchKit::LOG_CATEGORY);
         }
     }
 
@@ -571,6 +627,26 @@ class Indexing extends Component
     public function getOperations(): IndexOperations
     {
         return $this->_operations ??= $this->plugin()->getIndexOperations();
+    }
+
+    public function setTerms(Terms $terms): void
+    {
+        $this->_terms = $terms;
+    }
+
+    public function getTerms(): Terms
+    {
+        return $this->_terms ??= $this->plugin()->getTerms();
+    }
+
+    public function setNormalization(Normalization $normalization): void
+    {
+        $this->_normalization = $normalization;
+    }
+
+    public function getNormalization(): Normalization
+    {
+        return $this->_normalization ??= $this->plugin()->getNormalization();
     }
 
     private function plugin(): SearchKit

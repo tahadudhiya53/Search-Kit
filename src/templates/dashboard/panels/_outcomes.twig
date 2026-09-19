@@ -1,0 +1,29 @@
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Search outcomes"|t('search-kit') }}</h2>
+    </div>
+
+    {% if summary.totalSearches == 0 %}
+        <p class="zilch">{{ "No search activity for the selected period."|t('search-kit') }}</p>
+    {% else %}
+        {% set found = summary.totalSearches - summary.zeroResultSearches %}
+        {% set foundRate = summary.totalSearches ? found / summary.totalSearches : 0 %}
+        {% set circumference = 263.9 %}
+        <div class="sk-donut">
+            <svg viewBox="0 0 120 120" role="img"
+                 aria-label="{{ '{found} of {total} searches found results'|t('search-kit', { found: found, total: summary.totalSearches }) }}">
+                <circle class="sk-donut-track" cx="60" cy="60" r="42" />
+                <circle class="sk-donut-value" cx="60" cy="60" r="42"
+                        stroke-dasharray="{{ (foundRate * circumference)|round(2) }} {{ circumference }}" />
+                <text class="sk-donut-text" x="60" y="58">{{ (foundRate * 100)|number_format(0) }}%</text>
+                <text class="sk-donut-caption" x="60" y="76">{{ "found results"|t('search-kit') }}</text>
+            </svg>
+        </div>
+
+        <ul class="sk-legend sk-legend-stacked">
+            <li><span class="sk-swatch is-good"></span>{{ "Found results"|t('search-kit') }} <strong>{{ found|number_format }}</strong></li>
+            <li><span class="sk-swatch is-alert"></span>{{ "Found nothing"|t('search-kit') }} <strong>{{ summary.zeroResultSearches|number_format }}</strong></li>
+            <li><span class="sk-swatch is-muted"></span>{{ "Led to a click"|t('search-kit') }} <strong>{{ summary.clickedSearches|number_format }}</strong></li>
+        </ul>
+    {% endif %}
+</div>

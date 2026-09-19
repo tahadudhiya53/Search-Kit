@@ -1,0 +1,20 @@
+{#
+ # Drawing for the dashboard: a series across a 100×100 box, so a chart scales to whatever width it
+ # is given, and a query cell that cannot push a table out of shape however long the query was.
+ #}
+
+{% macro polyPoints(values, maxValue, close) %}
+{%- set values = values|length == 1 ? values|merge(values) : values -%}
+{%- set count = values|length -%}
+{%- set parts = close ? ['0,100'] : [] -%}
+{%- for i, value in values -%}
+    {%- set x = (i / (count - 1) * 100)|round(2) -%}
+    {%- set y = (100 - (maxValue > 0 ? value / maxValue * 100 : 0))|round(2) -%}
+    {%- set parts = parts|merge([x ~ ',' ~ y]) -%}
+{%- endfor -%}
+{{- (close ? parts|merge(['100,100']) : parts)|join(' ') -}}
+{% endmacro %}
+
+{% macro queryCell(query) %}
+    <span class="sk-query code" title="{{ query }}">{{ query }}</span>
+{% endmacro %}

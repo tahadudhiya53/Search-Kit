@@ -1,0 +1,207 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = isNew ? "New rule"|t('search-kit') : rule.name %}
+{% set fullPageForm = canManage %}
+{% set selectedSubnavItem = 'rules' %}
+{% set crumbs = [{ label: "Rules"|t('search-kit'), url: url('search-kit/rules') }] %}
+
+{% set indexOptions = [{ label: "Choose an index"|t('search-kit'), value: '' }] %}
+{% for index in indexes %}
+    {% set indexOptions = indexOptions|merge([{ label: index.name, value: index.id }]) %}
+{% endfor %}
+
+{% set siteOptions = [{ label: "All sites"|t('search-kit'), value: '' }] %}
+{% for site in craft.app.sites.getAllSites() %}
+    {% set siteOptions = siteOptions|merge([{ label: site.name, value: site.id }]) %}
+{% endfor %}
+
+{% import _self as ui %}
+
+{% macro results(rule, elementTypes, siteId, type, label, instructions) %}
+    {% import "_includes/forms" as forms %}
+    {% for elementType, elementLabel in elementTypes %}
+        {% set chosen = [] %}
+        {% for action in rule.getActionsOfType(type) %}
+            {% if action.elementType == elementType and action.elementId %}
+                {% set element = craft.app.elements.getElementById(action.elementId, elementType, action.siteId) %}
+                {% set chosen = element ? chosen|merge([element]) : chosen %}
+            {% endif %}
+        {% endfor %}
+
+        {{ forms.elementSelectField({
+            label: elementTypes|length > 1 ? label ~ ' — ' ~ elementLabel : label,
+            name: 'results[' ~ type.value ~ '][' ~ elementType|replace({'\\': '-'}) ~ ']',
+            elementType: elementType,
+            elements: chosen,
+            criteria: { siteId: siteId },
+            instructions: loop.first ? instructions : null,
+        }) }}
+    {% endfor %}
+{% endmacro %}
+
+{% block content %}
+    {{ actionInput('search-kit/rules/save') }}
+    {% if not isNew %}{{ hiddenInput('ruleId', rule.id) }}{% endif %}
+    {{ redirectInput('search-kit/rules') }}
+
+    {{ forms.textField({
+        first: true,
+        label: "Name"|t('search-kit'),
+        id: 'name',
+        name: 'name',
+        value: rule.name,
+        errors: rule.getErrors('name'),
+        instructions: "What this rule is for, so anyone can tell at a glance."|t('search-kit'),
+        required: true,
+    }) }}
+
+    {{ forms.selectField({
+        label: "Index"|t('search-kit'),
+        id: 'indexId',
+        name: 'indexId',
+        options: indexOptions,
+        value: rule.indexId,
+        errors: rule.getErrors('indexId'),
+        instructions: "The search this rule governs."|t('search-kit'),
+        required: true,
+    }) }}
+
+    {{ forms.selectField({
+        label: "Site"|t('search-kit'),
+        id: 'siteId',
+        name: 'siteId',
+        options: siteOptions,
+        value: rule.siteId,
+        errors: rule.getErrors('siteId'),
+        instructions: "A rule that names a site only ever affects that site’s results."|t('search-kit'),
+    }) }}
+
+    <hr>
+    <h2>{{ "When someone searches"|t('search-kit') }}</h2>
+
+    {{ forms.selectField({
+        label: "Match"|t('search-kit'),
+        id: 'matchType',
+        name: 'matchType',
+        options: matchOptions,
+        value: rule.matchType.value,
+        instructions: "A pattern may use “*” to stand for any run of characters. Everything is compared in lowercase, without punctuation or accents."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Query"|t('search-kit'),
+        id: 'matchValue',
+        name: 'matchValue',
+        value: rule.matchValue,
+        errors: rule.getErrors('matchValue'),
+        required: true,
+    }) }}
+
+    <hr>
+    <h2>{{ "What it does"|t('search-kit') }}</h2>
+
+    {% if rule.getErrors('actions') %}
+        <ul class="errors">
+            {% for error in rule.getErrors('actions') %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if isNew or elementTypes is empty or placementSiteId is null %}
+        <div class="readable">
+            <p>
+                {%- if isNew -%}
+                    {{ "Save the rule to choose the results it acts on."|t('search-kit') }}
+                {%- elseif elementTypes is empty -%}
+                    {{ "This rule’s index has no searchable fields yet, so there are no results to choose from."|t('search-kit') }}
+                {%- else -%}
+                    {{ "This rule’s index covers every site, so choose the site this rule applies in before picking results. A result has to be placed in one site in particular."|t('search-kit') }}
+                {%- endif -%}
+            </p>
+        </div>
+    {% else %}
+        {{ ui.results(rule, elementTypes, placementSiteId, actionTypes.pin, "Pin"|t('search-kit'), "Placed at a fixed position, whether or not the search found them. Several results run down the list from the position below."|t('search-kit')) }}
+
+        {{ forms.textField({
+            label: "Pinned position"|t('search-kit'),
+            id: 'pinPosition',
+            name: 'pinPosition',
+            type: 'number',
+            min: 1,
+            value: rule.getActionsOfType(actionTypes.pin)|length ? rule.getActionsOfType(actionTypes.pin)[0].position : 1,
+        }) }}
+
+        {{ ui.results(rule, elementTypes, placementSiteId, actionTypes.promote, "Promote"|t('search-kit'), "Always shown near the top, whether or not the search found them."|t('search-kit')) }}
+
+        {{ ui.results(rule, elementTypes, placementSiteId, actionTypes.boost, "Boost"|t('search-kit'), "Moved up the results the search already found."|t('search-kit')) }}
+
+        {{ forms.textField({
+            label: "Boost by"|t('search-kit'),
+            id: 'amounts-boost',
+            name: 'amounts[boost]',
+            type: 'number',
+            min: 1,
+            value: rule.getActionsOfType(actionTypes.boost)|length ? rule.getActionsOfType(actionTypes.boost)[0].amount : 100,
+        }) }}
+
+        {{ ui.results(rule, elementTypes, placementSiteId, actionTypes.bury, "Bury"|t('search-kit'), "Moved down the results the search already found."|t('search-kit')) }}
+
+        {{ forms.textField({
+            label: "Bury by"|t('search-kit'),
+            id: 'amounts-bury',
+            name: 'amounts[bury]',
+            type: 'number',
+            min: 1,
+            value: rule.getActionsOfType(actionTypes.bury)|length ? rule.getActionsOfType(actionTypes.bury)[0].amount : 100,
+        }) }}
+
+        {{ ui.results(rule, elementTypes, placementSiteId, actionTypes.hide, "Hide"|t('search-kit'), "Left out of the results entirely. Hiding wins over every other rule."|t('search-kit')) }}
+    {% endif %}
+
+    {{ forms.textField({
+        label: "Redirect to"|t('search-kit'),
+        id: 'redirect',
+        name: 'redirect',
+        value: rule.getActionsOfType(actionTypes.redirect)|length ? rule.getActionsOfType(actionTypes.redirect)[0].value : '',
+        instructions: "A path such as “/support”, or a full http(s) address. The search still runs; it is up to the template whether to follow this. A rule that names a site only redirects searches of that site alone."|t('search-kit'),
+    }) }}
+
+    <hr>
+    <h2>{{ "When it applies"|t('search-kit') }}</h2>
+
+    {{ forms.dateTimeField({
+        label: "Start"|t('search-kit'),
+        id: 'dateStart',
+        name: 'dateStart',
+        value: rule.dateStart,
+        errors: rule.getErrors('dateStart'),
+        instructions: "Leave empty to start straight away. Times are entered and shown in the system timezone ({tz})."|t('search-kit', { tz: craft.app.getTimeZone() }),
+    }) }}
+
+    {{ forms.dateTimeField({
+        label: "End"|t('search-kit'),
+        id: 'dateEnd',
+        name: 'dateEnd',
+        value: rule.dateEnd,
+        errors: rule.getErrors('dateEnd'),
+        instructions: "Leave empty to keep going."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Priority"|t('search-kit'),
+        id: 'priority',
+        name: 'priority',
+        type: 'number',
+        min: 0,
+        value: rule.priority,
+        errors: rule.getErrors('priority'),
+        instructions: "Higher priority rules are applied first. Where two rules want different things for the same result, the higher one decides — including when the other one hides it."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Enabled"|t('search-kit'),
+        id: 'enabled',
+        name: 'enabled',
+        on: rule.enabled,
+    }) }}
+{% endblock %}

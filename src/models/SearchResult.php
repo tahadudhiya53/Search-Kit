@@ -26,6 +26,61 @@ class SearchResult extends Model
     /** @var array<string,mixed> Diagnostic: whatever the provider reported about the execution. */
     public array $metadata = [];
 
+    /** @var string|null What was searched for instead, when the query was corrected before running. */
+    public ?string $correctedText = null;
+
+    /** @var string[] Queries worth trying instead, offered when this one found nothing. */
+    public array $suggestions = [];
+
+    /** @var ParsedQuery|null The terms this result was produced from, for explaining a match. */
+    public ?ParsedQuery $parsedQuery = null;
+
+    /** @var string|null Where a matching search rule says this query should be sent instead. */
+    public ?string $redirect = null;
+
+    /** @var RuleEvaluation[] Every search rule considered, matched or not, and what it did. */
+    public array $rules = [];
+
+    /**
+     * @var string|null The token this search was recorded under, when it was. A template posts it
+     * back to associate a result someone opened with the search that found it. It identifies the
+     * search, never the person who made it.
+     */
+    public ?string $trackingToken = null;
+
+    public function wasCorrected(): bool
+    {
+        return $this->correctedText !== null;
+    }
+
+    public function isTracked(): bool
+    {
+        return $this->trackingToken !== null;
+    }
+
+    public function hasRedirect(): bool
+    {
+        return $this->redirect !== null;
+    }
+
+    /**
+     * The rules that governed this search, for a template that shows why a result is where it is.
+     *
+     * @return RuleEvaluation[]
+     */
+    public function getMatchedRules(): array
+    {
+        return array_values(array_filter(
+            $this->rules,
+            static fn(RuleEvaluation $evaluation) => $evaluation->matched,
+        ));
+    }
+
+    public function hasSuggestions(): bool
+    {
+        return $this->suggestions !== [];
+    }
+
     public function getCount(): int
     {
         return count($this->hits);

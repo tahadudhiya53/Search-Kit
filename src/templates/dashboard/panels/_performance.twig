@@ -1,0 +1,29 @@
+{% import "search-kit/dashboard/_charts" as chart %}
+
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "How long searches took"|t('search-kit') }}</h2>
+        {% if trend|length %}
+            <span class="light">{{ "Slowest average: {time}ms"|t('search-kit', { time: maxTime|number_format(1) }) }}</span>
+        {% endif %}
+    </div>
+
+    {% if trend|length == 0 %}
+        <p class="zilch">{{ "No search activity for the selected period."|t('search-kit') }}</p>
+    {% else %}
+        <div class="sk-chart is-short">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
+                 aria-label="{{ 'Average response time from {from} to {to}, at most {max} milliseconds'|t('search-kit', { from: trend|first.date, to: trend|last.dateEnd, max: maxTime|number_format(1) }) }}">
+                <line class="sk-chart-grid" x1="0" y1="0" x2="100" y2="0" />
+                <line class="sk-chart-grid" x1="0" y1="50" x2="100" y2="50" />
+                <line class="sk-chart-grid" x1="0" y1="100" x2="100" y2="100" />
+                <polyline class="sk-chart-line is-time" points="{{ chart.polyPoints(timeValues, maxTime, false) }}" />
+            </svg>
+            <div class="sk-chart-axis">
+                <span>{{ trend|first.date|date('j M Y') }}</span>
+                <span>{{ "Average {time}ms overall"|t('search-kit', { time: summary.averageResponseTime|number_format(1) }) }}</span>
+                <span>{{ trend|last.dateEnd|date('j M Y') }}</span>
+            </div>
+        </div>
+    {% endif %}
+</div>

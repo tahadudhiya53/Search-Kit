@@ -10,11 +10,14 @@ use craft\helpers\DateTimeHelper;
 use DateTimeInterface;
 use Tahadudhiya\SearchKit\base\SearchProvider;
 use Tahadudhiya\SearchKit\enums\FilterOperator;
+use Tahadudhiya\SearchKit\enums\PartialMatchMode;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\enums\SortDirection;
 use Tahadudhiya\SearchKit\errors\InvalidQueryException;
 use Tahadudhiya\SearchKit\errors\ProviderException;
 use Tahadudhiya\SearchKit\errors\SearchKitException;
+use Tahadudhiya\SearchKit\models\ParsedQuery;
+use Tahadudhiya\SearchKit\models\QueryTerm;
 use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchFilter;
 use Tahadudhiya\SearchKit\models\SearchHit;
@@ -58,9 +61,10 @@ class CraftProvider extends SearchProvider
     }
 
     /**
-     * Craft scores results itself: it has no per-field weighting or highlighting, so SearchKit
-     * rejects queries asking for those rather than quietly ignoring them. Craft also clears an
-     * element's keywords itself on delete, so there is nothing here to delete.
+     * Craft scores results itself: it has no per-field weighting, highlighting or typo tolerance,
+     * so SearchKit rejects queries asking for those rather than quietly ignoring them. Craft also
+     * clears an element's keywords itself on delete, so there is nothing here to delete. Excluded
+     * results are left out of the element query, so they are missing from the count as well.
      */
     public static function capabilities(): array
     {
@@ -69,6 +73,11 @@ class CraftProvider extends SearchProvider
             ProviderCapability::Indexing,
             ProviderCapability::Filtering,
             ProviderCapability::Sorting,
+            ProviderCapability::PartialMatching,
+            ProviderCapability::PhraseMatching,
+            ProviderCapability::TermExclusion,
+            ProviderCapability::TermAlternation,
+            ProviderCapability::ResultExclusion,
         ];
     }
 
@@ -150,8 +159,61 @@ class CraftProvider extends SearchProvider
             'metadata' => [
                 'elementTypes' => $elementTypes,
                 'orderBy' => array_column($sorts, 'field'),
+                'craftQuery' => $this->craftSyntax($query->getParsedQuery()),
             ],
         ]);
+    }
+
+    /**
+     * The query in the form Craft's own parser reads, with its default matching turned off: what a
+     * term matches is decided by the pipeline, so nothing here may widen it.
+     *
+     * @return array<string,mixed>
+     */
+    private function searchCriteria(SearchQuery $query): array
+    {
+        return [
+            'query' => $this->craftSyntax($query->getParsedQuery()),
+            'subLeft' => false,
+            'subRight' => false,
+            'exclude' => false,
+            'exact' => false,
+        ];
+    }
+
+    /**
+     * Writes parsed terms back out in Craft's search syntax. Terms are normalized by the time they
+     * reach here, so none of them can carry a character Craft would read as an operator.
+     */
+    private function craftSyntax(ParsedQuery $parsed): string
+    {
+        $written = [];
+
+        foreach ($parsed->getTerms() as $term) {
+            // Each alternative carries its own matching, so none of them is widened by its neighbour.
+            $variants = array_map(fn(QueryTerm $variant) => $this->writeTerm($variant), $term->getVariants());
+
+            // Craft reads “OR” between two terms as either one being enough.
+            $written[] = ($term->excluded ? '-' : '') . implode(' OR ', $variants);
+        }
+
+        return implode(' ', $written);
+    }
+
+    /**
+     * A word with the matching it was given, or a phrase quoted so Craft keeps its words together.
+     */
+    private function writeTerm(QueryTerm $term): string
+    {
+        if ($term->phrase || str_contains($term->text, ' ')) {
+            return '"' . $term->text . '"';
+        }
+
+        return match ($term->partial) {
+            PartialMatchMode::Substring => '*' . $term->text . '*',
+            PartialMatchMode::Prefix => $term->text . '*',
+            PartialMatchMode::Off => $term->text,
+        };
     }
 
     /**
@@ -379,13 +441,15 @@ class CraftProvider extends SearchProvider
         $siteId = $query->siteId ?? $index->siteId;
 
         $elementQuery = $elementType::find()
-            ->search($query->getNormalizedText())
+            ->search($this->searchCriteria($query))
             ->siteId($siteId ?? '*')
             ->orderBy($this->orderBy($elementType, $sorts));
 
         if ($query->status !== null) {
             $elementQuery->status($query->status);
         }
+
+        $this->excludeElements($elementQuery, $query);
 
         $usable = true;
 
@@ -400,6 +464,33 @@ class CraftProvider extends SearchProvider
         }
 
         return $usable ? $elementQuery : null;
+    }
+
+    /**
+     * Leaves excluded results out of the query itself, so they cannot appear on any page and are not
+     * counted either. A removal naming a site takes only that site's version of the element, which
+     * is what keeps a rule written for one site out of another.
+     */
+    private function excludeElements(ElementQueryInterface $elementQuery, SearchQuery $query): void
+    {
+        $everySite = [];
+
+        foreach ($query->getExcludedElements() as $excluded) {
+            if ($excluded['siteId'] === null) {
+                $everySite[] = $excluded['elementId'];
+                continue;
+            }
+
+            $elementQuery->andWhere(['not', [
+                'and',
+                ['elements.id' => $excluded['elementId']],
+                ['elements_sites.siteId' => $excluded['siteId']],
+            ]]);
+        }
+
+        if ($everySite !== []) {
+            $elementQuery->andWhere(['not in', 'elements.id', $everySite]);
+        }
     }
 
     /**

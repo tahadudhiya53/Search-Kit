@@ -15,4 +15,12 @@ enum ProviderCapability: string
     case Sorting = 'sorting';
     case Highlighting = 'highlighting';
     case FieldWeighting = 'fieldWeighting';
+    case PartialMatching = 'partialMatching';
+    case PhraseMatching = 'phraseMatching';
+    case TermExclusion = 'termExclusion';
+    case TermAlternation = 'termAlternation';
+    case TypoTolerance = 'typoTolerance';
+
+    /** Leaving named results out of a search entirely, so they cannot appear on any page of it. */
+    case ResultExclusion = 'resultExclusion';
 }

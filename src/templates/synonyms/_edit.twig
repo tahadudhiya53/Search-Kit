@@ -1,0 +1,86 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = isNew ? "New synonym"|t('search-kit') : "Edit synonym"|t('search-kit') %}
+{% set fullPageForm = canManage %}
+{% set selectedSubnavItem = 'synonyms' %}
+{% set crumbs = [{ label: "Synonyms"|t('search-kit'), url: url('search-kit/synonyms') }] %}
+
+{% set indexOptions = [{ label: "All indexes"|t('search-kit'), value: '' }] %}
+{% for index in indexes %}
+    {% set indexOptions = indexOptions|merge([{ label: index.name, value: index.id }]) %}
+{% endfor %}
+
+{% set siteOptions = [{ label: "All sites"|t('search-kit'), value: '' }] %}
+{% for site in craft.app.sites.getAllSites() %}
+    {% set siteOptions = siteOptions|merge([{ label: site.name, value: site.id }]) %}
+{% endfor %}
+
+{% block content %}
+    {{ actionInput('search-kit/synonyms/save') }}
+    {% if not isNew %}{{ hiddenInput('synonymId', synonym.id) }}{% endif %}
+    {{ redirectInput('search-kit/synonyms') }}
+
+    {{ forms.selectField({
+        first: true,
+        label: "Type"|t('search-kit'),
+        id: 'type',
+        name: 'type',
+        options: typeOptions,
+        value: synonym.type.value,
+        instructions: "Two-way: every term finds the others. One-way: the terms also find the replacements, but not the other way around."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Terms"|t('search-kit'),
+        id: 'terms',
+        name: 'terms',
+        value: synonym.terms|join(', '),
+        errors: synonym.getErrors('terms'),
+        instructions: "Comma separated. Each one may be a word or a phrase, and is normalized the same way indexed content is."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Replacements"|t('search-kit'),
+        id: 'replacements',
+        name: 'replacements',
+        value: synonym.replacements|join(', '),
+        errors: synonym.getErrors('replacements'),
+        instructions: "One-way synonyms only. What the terms above also search for."|t('search-kit'),
+    }) }}
+
+    {{ forms.selectField({
+        label: "Index"|t('search-kit'),
+        id: 'indexId',
+        name: 'indexId',
+        options: indexOptions,
+        value: synonym.indexId,
+        errors: synonym.getErrors('indexId'),
+    }) }}
+
+    {{ forms.selectField({
+        label: "Site"|t('search-kit'),
+        id: 'siteId',
+        name: 'siteId',
+        options: siteOptions,
+        value: synonym.siteId,
+        errors: synonym.getErrors('siteId'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Order"|t('search-kit'),
+        id: 'sortOrder',
+        name: 'sortOrder',
+        type: 'number',
+        value: synonym.sortOrder,
+        errors: synonym.getErrors('sortOrder'),
+        instructions: "Only decides the order they are listed in."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Enabled"|t('search-kit'),
+        id: 'enabled',
+        name: 'enabled',
+        on: synonym.enabled,
+    }) }}
+{% endblock %}

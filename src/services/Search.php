@@ -5,6 +5,7 @@ namespace Tahadudhiya\SearchKit\services;
 use Craft;
 use craft\base\ElementInterface;
 use Tahadudhiya\SearchKit\base\SearchProviderInterface;
+use Tahadudhiya\SearchKit\enums\FilterOperator;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\errors\IndexDisabledException;
 use Tahadudhiya\SearchKit\errors\IndexNotFoundException;
@@ -14,6 +15,9 @@ use Tahadudhiya\SearchKit\errors\SearchKitException;
 use Tahadudhiya\SearchKit\errors\UnauthorizedQueryException;
 use Tahadudhiya\SearchKit\errors\UnsupportedCapabilityException;
 use Tahadudhiya\SearchKit\events\SearchEvent;
+use Tahadudhiya\SearchKit\models\ParsedQuery;
+use Tahadudhiya\SearchKit\models\RulePlan;
+use Tahadudhiya\SearchKit\models\SearchFilter;
 use Tahadudhiya\SearchKit\models\SearchHit;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchQuery;
@@ -38,6 +42,9 @@ class Search extends Component
     private ?SearchableFields $_searchableFields = null;
     private ?Providers $_providers = null;
     private ?Highlighting $_highlighting = null;
+    private ?QueryPipeline $_queryPipeline = null;
+    private ?Suggestions $_suggestions = null;
+    private ?RuleEngine $_ruleEngine = null;
 
     /**
      * @throws InvalidQueryException|IndexNotFoundException|IndexDisabledException|ProviderException
@@ -58,20 +65,32 @@ class Search extends Component
         $provider = $this->getProviders()->getProviderForIndex($index);
         $this->assertProviderCanRun($query, $provider);
 
+        // Everything the query text means is settled here, so a provider is only ever handed terms.
+        $parsed = $this->getQueryPipeline()->parse($query, $index, $provider);
+        $this->assertQueryHasTerms($parsed);
+        $query->setParsedQuery($parsed);
+
+        // Settled before the search runs: the rules decide which results the provider must leave
+        // out and how wide a window the page is read in, neither of which it can be told afterwards.
+        $plan = $this->getRuleEngine()->plan($query, $index);
+        $this->assertProviderCanExclude($plan, $provider);
+        $execution = $this->getRuleEngine()->windowQuery($query, $plan);
+
         $this->trigger(self::EVENT_BEFORE_SEARCH, new SearchEvent([
             'query' => $query,
             'index' => $index,
         ]));
 
         $startedAt = hrtime(true);
+        $result = $this->execute($execution, $index, $provider);
+        $result = $this->correctAndRetry($result, $execution, $index, $provider, $plan);
 
-        try {
-            $result = $provider->search($query, $index);
-        } catch (SearchKitException $e) {
-            throw $e;
-        } catch (Throwable $e) {
-            Craft::error("Search failed on “{$index->handle}”: {$e->getMessage()}", SearchKit::LOG_CATEGORY);
-            throw new ProviderException("The “{$index->name}” search index could not be searched.", 0, $e);
+        // A correction happened to the query that ran, and everything downstream reads the terms
+        // the results actually came from.
+        $query->setParsedQuery($execution->getParsedQuery());
+
+        if ($result->wasCorrected()) {
+            [$plan, $execution, $result] = $this->replan($result, $query, $index, $provider, $execution);
         }
 
         // Normalizing these here is what makes every result comparable, whatever the provider did.
@@ -80,16 +99,25 @@ class Search extends Component
         $result->provider = $provider::class;
         $result->limit = $query->limit;
         $result->offset = $query->offset;
+        $result->parsedQuery = $query->getParsedQuery();
 
         $this->normalizeHitSites($result, $query, $index);
+        $this->getRuleEngine()->apply($result, $plan, $query, $execution, $index, $this->fetchAdjusted($plan, $query, $index, $provider));
         $this->hydrateElements($result, $query);
         $this->assertResultsAreViewable($result, $query, $index);
+
+        // A result a rule placed is loaded and authorized like every other one, so one the viewer
+        // may not see has already been dropped. This settles the explanation with it, rather than
+        // reporting a placement that never happened and naming content nobody was shown.
+        $this->getRuleEngine()->reconcilePlacements($plan);
 
         // A provider that highlights for itself keeps its own answer; this fills in for one that
         // cannot, so highlighting is part of the API whatever is serving the index.
         if ($query->highlight && !$provider->supports(ProviderCapability::Highlighting)) {
             $this->getHighlighting()->apply($result, $query, $index);
         }
+
+        $this->suggestAlternatives($result, $query, $index);
 
         $this->trigger(self::EVENT_AFTER_SEARCH, new SearchEvent([
             'query' => $query,
@@ -98,6 +126,286 @@ class Search extends Component
         ]));
 
         return $result;
+    }
+
+    /**
+     * Completions for a query someone is still typing. This never runs a search: it reads the words
+     * the index holds, so it stays cheap enough to call on every keystroke.
+     *
+     * @return string[]
+     * @throws InvalidQueryException|IndexNotFoundException|IndexDisabledException
+     */
+    public function autocomplete(SearchQuery $query, ?int $limit = null): array
+    {
+        $index = $this->resolveIndex($query->indexHandle);
+        $this->assertQuerySiteIsUsable($query, $index);
+
+        return $this->getSuggestions()->autocomplete(
+            $index,
+            $query->text,
+            $limit ?? $index->getSearchSettings()->suggestionLimit,
+            $query->siteId,
+        );
+    }
+
+    /**
+     * What else could be searched for instead of this query, whether or not it has been run.
+     *
+     * @return string[]
+     * @throws InvalidQueryException|IndexNotFoundException|IndexDisabledException|ProviderException
+     */
+    public function suggest(SearchQuery $query, ?int $limit = null): array
+    {
+        $index = $this->resolveIndex($query->indexHandle);
+        $this->assertQuerySiteIsUsable($query, $index);
+
+        if ($query->getNormalizedText() === '') {
+            return [];
+        }
+
+        $parsed = $this->getQueryPipeline()->parse($query, $index, $this->getProviders()->getProviderForIndex($index));
+
+        if ($parsed->isEmpty()) {
+            return [];
+        }
+
+        return $this->getSuggestions()->forQuery(
+            $parsed,
+            $index,
+            $query->siteId,
+            $limit ?? $index->getSearchSettings()->suggestionLimit,
+        );
+    }
+
+    /**
+     * @throws ProviderException
+     */
+    private function execute(SearchQuery $query, SearchIndex $index, SearchProviderInterface $provider): SearchResult
+    {
+        try {
+            return $provider->search($query, $index);
+        } catch (SearchKitException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            Craft::error("Search failed on “{$index->handle}”: {$e->getMessage()}", SearchKit::LOG_CATEGORY);
+            throw new ProviderException("The “{$index->name}” search index could not be searched.", 0, $e);
+        }
+    }
+
+    /**
+     * A query that found nothing is tried again against the words the index actually holds. This
+     * only ever runs when there was nothing to return, so a search that worked pays nothing for it.
+     *
+     * @throws ProviderException
+     */
+    private function correctAndRetry(
+        SearchResult $result,
+        SearchQuery $query,
+        SearchIndex $index,
+        SearchProviderInterface $provider,
+        RulePlan $plan,
+    ): SearchResult {
+        // A provider that tolerates typos itself has already done this, and better. Results the
+        // rules place are held back from the provider, so a search that places any has found
+        // something and is not corrected out from under it.
+        if ($result->total > 0 || $plan->placedCount() > 0 || $provider->supports(ProviderCapability::TypoTolerance)) {
+            return $result;
+        }
+
+        $original = $query->getParsedQuery();
+        $corrected = $this->getSuggestions()->correct($original, $index, $query->siteId);
+
+        if ($corrected === null) {
+            return $result;
+        }
+
+        $query->setParsedQuery($corrected);
+        $retried = $this->execute($query, $index, $provider);
+
+        if ($retried->total === 0) {
+            // The correction was no better, so the search stands as it was asked.
+            $query->setParsedQuery($original);
+            return $result;
+        }
+
+        $retried->correctedText = $corrected->getText();
+
+        return $retried;
+    }
+
+    /**
+     * Rules govern the query that actually ran, so a correction has them read again against the
+     * corrected text. The search is only run a second time when the new rules need results the first
+     * window did not cover — a correction that changes nothing costs nothing.
+     *
+     * @return array{RulePlan,SearchQuery,SearchResult}
+     * @throws ProviderException
+     */
+    private function replan(
+        SearchResult $result,
+        SearchQuery $query,
+        SearchIndex $index,
+        SearchProviderInterface $provider,
+        SearchQuery $execution,
+    ): array {
+        $engine = $this->getRuleEngine();
+        $plan = $engine->plan($query, $index, $result->correctedText);
+        $this->assertProviderCanExclude($plan, $provider);
+
+        $planned = $engine->windowQuery($query, $plan);
+
+        if ($engine->windowCovers($plan, $execution, $planned)) {
+            return [$plan, $execution, $result];
+        }
+
+        $corrected = $result->correctedText;
+        $retried = $this->execute($planned, $index, $provider);
+        $retried->correctedText = $corrected;
+
+        return [$plan, $planned, $retried];
+    }
+
+    /**
+     * The results a boost or a bury moves, asked for by name. They are held back from the ranked
+     * list, so this is what puts them back — at the score the provider gave them, which is the only
+     * honest thing to move. A result the search did not match is simply not returned.
+     *
+     * @return SearchHit[]
+     * @throws ProviderException
+     */
+    private function fetchAdjusted(
+        RulePlan $plan,
+        SearchQuery $query,
+        SearchIndex $index,
+        SearchProviderInterface $provider,
+    ): array {
+        if (!$plan->refetchesAdjusted) {
+            return [];
+        }
+
+        $wanted = [];
+        $ids = [];
+
+        foreach ($plan->adjustedElements() as $target) {
+            $wanted[RulePlan::key($target['elementId'], $target['siteId'])] = true;
+            $ids[$target['elementId']] = $target['elementId'];
+        }
+
+        // One element answers once per site, so a search covering several needs room for each of
+        // them: asking for one row per result would leave the wanted site's copy outside the probe.
+        $scoped = ($query->siteId ?? $index->siteId) !== null;
+        $perElement = $scoped ? 1 : $this->scopeSiteCount();
+
+        $hits = [];
+
+        // Asked for in batches small enough that every site's copy fits inside one search, so no
+        // result is ever left out by the limit a single search may carry.
+        foreach (array_chunk(array_values($ids), max(1, intdiv(SearchQuery::MAX_LIMIT, $perElement))) as $batch) {
+            foreach ($this->fetchBatch($batch, $perElement, $query, $index, $provider) as $hit) {
+                // A result a rule already removed or placed is not also moved: it is accounted for
+                // once, where that rule put it.
+                if (!isset($wanted[RulePlan::key($hit->elementId, $hit->siteId)])
+                    && !isset($wanted[RulePlan::key($hit->elementId, null)])) {
+                    continue;
+                }
+
+                if ($plan->claimedBy($hit->elementId, $hit->siteId) !== null) {
+                    continue;
+                }
+
+                $hits[RulePlan::key($hit->elementId, $hit->siteId)] = $hit;
+            }
+        }
+
+        return array_values($hits);
+    }
+
+    /**
+     * How many sites a search of an index covering all of them can answer for. Every one of them may
+     * hold its own copy of a result, which is what decides how many fit in one search.
+     */
+    protected function scopeSiteCount(): int
+    {
+        return max(1, count(Craft::$app->getSites()->getAllSiteIds()));
+    }
+
+    /**
+     * One batch of adjusted results, read with the same query so their scores are the ones this
+     * search produced rather than something worked out separately.
+     *
+     * @param int[] $ids
+     * @return SearchHit[]
+     * @throws ProviderException
+     */
+    private function fetchBatch(
+        array $ids,
+        int $perElement,
+        SearchQuery $query,
+        SearchIndex $index,
+        SearchProviderInterface $provider,
+    ): array {
+        $probe = clone $query;
+        $probe->offset = 0;
+        $probe->limit = min(count($ids) * $perElement, SearchQuery::MAX_LIMIT);
+        $probe->setParsedQuery($query->getParsedQuery());
+        $probe->addFilter(SearchFilter::make('id', FilterOperator::In, $ids));
+
+        $found = $this->execute($probe, $index, $provider);
+        $this->normalizeHitSites($found, $query, $index);
+
+        return $found->hits;
+    }
+
+    /**
+     * A rule that removes or places a result needs the provider to leave it out of the search
+     * entirely; one that cannot is refused rather than hiding only what happened to be read.
+     *
+     * @throws UnsupportedCapabilityException
+     */
+    private function assertProviderCanExclude(RulePlan $plan, SearchProviderInterface $provider): void
+    {
+        if ($plan->excludedElements() !== [] && !$provider->supports(ProviderCapability::ResultExclusion)) {
+            throw UnsupportedCapabilityException::for($provider::displayName(), ProviderCapability::ResultExclusion);
+        }
+
+        // Moving a result needs it asked for by name, which is a filter.
+        if ($plan->refetchesAdjusted && !$provider->supports(ProviderCapability::Filtering)) {
+            throw UnsupportedCapabilityException::for($provider::displayName(), ProviderCapability::Filtering);
+        }
+    }
+
+    /**
+     * Something else to try, for a search that came back with nothing.
+     */
+    private function suggestAlternatives(SearchResult $result, SearchQuery $query, SearchIndex $index): void
+    {
+        $settings = $index->getSearchSettings();
+
+        if (!$result->isEmpty() || !$settings->suggestions) {
+            return;
+        }
+
+        $result->suggestions = $this->getSuggestions()->forQuery(
+            $query->getParsedQuery(),
+            $index,
+            $query->siteId,
+            $settings->suggestionLimit,
+        );
+    }
+
+    /**
+     * A query that only rules things out has nothing to look for, which no provider can answer.
+     *
+     * @throws InvalidQueryException
+     */
+    private function assertQueryHasTerms(ParsedQuery $parsed): void
+    {
+        if ($parsed->isEmpty()) {
+            throw new InvalidQueryException(
+                'The search has nothing to look for.',
+                ['text' => ['A search needs at least one term that is not an exclusion.']],
+            );
+        }
     }
 
     /**
@@ -408,6 +716,36 @@ class Search extends Component
     public function getHighlighting(): Highlighting
     {
         return $this->_highlighting ??= $this->plugin()->getHighlighting();
+    }
+
+    public function setQueryPipeline(QueryPipeline $queryPipeline): void
+    {
+        $this->_queryPipeline = $queryPipeline;
+    }
+
+    public function getQueryPipeline(): QueryPipeline
+    {
+        return $this->_queryPipeline ??= $this->plugin()->getQueryPipeline();
+    }
+
+    public function setSuggestions(Suggestions $suggestions): void
+    {
+        $this->_suggestions = $suggestions;
+    }
+
+    public function getSuggestions(): Suggestions
+    {
+        return $this->_suggestions ??= $this->plugin()->getSuggestions();
+    }
+
+    public function setRuleEngine(RuleEngine $ruleEngine): void
+    {
+        $this->_ruleEngine = $ruleEngine;
+    }
+
+    public function getRuleEngine(): RuleEngine
+    {
+        return $this->_ruleEngine ??= $this->plugin()->getRuleEngine();
     }
 
     public function setProviders(Providers $providers): void

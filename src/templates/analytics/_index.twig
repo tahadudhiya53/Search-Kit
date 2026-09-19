@@ -1,0 +1,261 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = "Search activity"|t('search-kit') %}
+{% set selectedSubnavItem = 'analytics' %}
+
+{% set indexOptions = [{ label: "All indexes"|t('search-kit'), value: '' }] %}
+{% for indexId, indexName in indexNames %}
+    {% set indexOptions = indexOptions|merge([{ label: indexName, value: indexId }]) %}
+{% endfor %}
+
+{% set siteOptions = [{ label: "Any site"|t('search-kit'), value: '' }] %}
+{% for siteId, siteName in siteNames %}
+    {% set siteOptions = siteOptions|merge([{ label: siteName, value: siteId }]) %}
+{% endfor %}
+
+{% set today = now|date('Y-m-d') %}
+{% set activeFrom = criteria.dateFrom ? criteria.dateFrom|date('Y-m-d') : '' %}
+{% set activeTo = criteria.selectedDateTo ? criteria.selectedDateTo|date('Y-m-d') : '' %}
+{% set isFiltered = criteria.indexId or criteria.siteId or activeFrom or activeTo %}
+
+{% set ranges = [
+    { label: "Today"|t('search-kit'), from: today, to: today },
+    { label: "Last 7 days"|t('search-kit'), from: now|date_modify('-6 days')|date('Y-m-d'), to: today },
+    { label: "Last 30 days"|t('search-kit'), from: now|date_modify('-29 days')|date('Y-m-d'), to: today },
+    { label: "All time"|t('search-kit'), from: '', to: '' },
+] %}
+
+{% set firstRow = total ? ((page - 1) * pageSize) + 1 : 0 %}
+{% set lastRow = min(page * pageSize, total) %}
+{% set pageCount = pageSize ? (total / pageSize)|round(0, 'ceil') : 1 %}
+
+{% block content %}
+    <p class="light">{{ "What people searched for, what came back, and what they opened. Nothing recorded here identifies who searched: no account, no address and no session."|t('search-kit') }}</p>
+
+    <form method="get" accept-charset="UTF-8" class="sk-filters flex">
+        <div class="sk-field">
+            <span class="sk-field-label">{{ "Index"|t('search-kit') }}</span>
+            {{ forms.select({ name: 'indexId', options: indexOptions, value: criteria.indexId }) }}
+        </div>
+
+        <div class="sk-field">
+            <span class="sk-field-label">
+                {{ "Site"|t('search-kit') }}
+                <span class="info">{{ "Counts searches of that site alone. A search covering every site is not one of them."|t('search-kit') }}</span>
+            </span>
+            {{ forms.select({ name: 'siteId', options: siteOptions, value: criteria.siteId }) }}
+        </div>
+
+        <div class="sk-field">
+            <span class="sk-field-label">{{ "From"|t('search-kit') }}</span>
+            {{ forms.date({ name: 'dateFrom', value: criteria.dateFrom }) }}
+        </div>
+
+        <div class="sk-field">
+            <span class="sk-field-label">
+                {{ "To"|t('search-kit') }}
+                <span class="info">{{ "The whole of this day is counted."|t('search-kit') }}</span>
+            </span>
+            {{ forms.date({ name: 'dateTo', value: criteria.selectedDateTo }) }}
+        </div>
+
+        <div class="sk-field">
+            <button type="submit" class="btn submit">{{ "Apply"|t('search-kit') }}</button>
+        </div>
+
+        {% if isFiltered %}
+            <div class="sk-field">
+                <a class="btn" href="{{ url('search-kit/analytics') }}">{{ "Clear"|t('search-kit') }}</a>
+            </div>
+        {% endif %}
+    </form>
+
+    <nav class="sk-ranges">
+        {% for range in ranges %}
+            {% set isActive = range.from == activeFrom and range.to == activeTo %}
+            <a class="sk-range{{ isActive ? ' is-active' }}"
+               href="{{ url('search-kit/analytics', {
+                   indexId: criteria.indexId,
+                   siteId: criteria.siteId,
+                   dateFrom: range.from,
+                   dateTo: range.to,
+               }) }}">{{ range.label }}</a>
+        {% endfor %}
+    </nav>
+
+    <ul class="sk-stats">
+        <li class="sk-stat">
+            <span class="sk-stat-value">{{ summary.totalSearches|number_format }}</span>
+            <span class="sk-stat-label">{{ "Searches"|t('search-kit') }}</span>
+        </li>
+        <li class="sk-stat">
+            <span class="sk-stat-value">{{ summary.uniqueQueries|number_format }}</span>
+            <span class="sk-stat-label">{{ "Unique queries"|t('search-kit') }}</span>
+        </li>
+        <li class="sk-stat{{ summary.zeroResultSearches ? ' is-alert' }}">
+            <span class="sk-stat-value">{{ (summary.zeroResultRate * 100)|number_format(1) }}%</span>
+            <span class="sk-stat-label">{{ "Found nothing"|t('search-kit') }}</span>
+            <span class="sk-stat-note">{{ "{count} of {total} searches"|t('search-kit', { count: summary.zeroResultSearches, total: summary.totalSearches }) }}</span>
+        </li>
+        <li class="sk-stat{{ summary.clickedSearches ? ' is-good' }}">
+            <span class="sk-stat-value">{{ (summary.clickThroughRate * 100)|number_format(1) }}%</span>
+            <span class="sk-stat-label">{{ "Click-through rate"|t('search-kit') }}</span>
+            <span class="sk-stat-note">{{ "{count} results opened"|t('search-kit', { count: summary.clicks }) }}</span>
+        </li>
+        <li class="sk-stat">
+            <span class="sk-stat-value">{{ summary.averageResponseTime|number_format(1) }}<small>ms</small></span>
+            <span class="sk-stat-label">{{ "Average response"|t('search-kit') }}</span>
+        </li>
+        <li class="sk-stat{{ summary.slowSearches ? ' is-alert' }}">
+            <span class="sk-stat-value">{{ summary.slowSearches|number_format }}</span>
+            <span class="sk-stat-label">{{ "Slow searches"|t('search-kit') }}</span>
+            <span class="sk-stat-note">{{ "Over {threshold}ms"|t('search-kit', { threshold: criteria.slowThreshold }) }}</span>
+        </li>
+    </ul>
+
+    <div class="pane">
+        <div class="sk-pane-header">
+            <h2>{{ "Searches"|t('search-kit') }}</h2>
+            {% if total %}
+                <span class="light">{{ "Showing {first}–{last} of {total}"|t('search-kit', { first: firstRow, last: lastRow, total: total }) }}</span>
+            {% endif %}
+        </div>
+
+        {% if searches is empty %}
+            <p class="zilch">
+                {{ isFiltered
+                    ? "No searches were recorded in what you have filtered to."|t('search-kit')
+                    : "Nothing has been searched for yet. Searches appear here as they happen."|t('search-kit') }}
+            </p>
+        {% else %}
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Searched for"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Index"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Site"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Results"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Opened"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Took"|t('search-kit') }}</th>
+                        <th scope="col">{{ "When"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for search in searches %}
+                        <tr>
+                            <th scope="row" data-title="{{ 'Searched for'|t('search-kit') }}">
+                                <span class="code">{{ search.query }}</span>
+                                {% if search.wasCorrected() %}
+                                    <span class="light">&rarr;</span> <span class="code">{{ search.correctedQuery }}</span>
+                                {% endif %}
+                                {% if search.normalizedQuery != search.query %}
+                                    <span class="sk-stat-note">{{ "Counted as"|t('search-kit') }} {{ search.normalizedQuery }}</span>
+                                {% endif %}
+                            </th>
+                            <td data-title="{{ 'Index'|t('search-kit') }}">
+                                {{- indexNames[search.indexId] ?? search.indexId -}}
+                            </td>
+                            <td data-title="{{ 'Site'|t('search-kit') }}">
+                                {%- if search.siteId -%}
+                                    {{ siteNames[search.siteId] ?? search.siteId }}
+                                {%- else -%}
+                                    <span class="light">{{ "All sites"|t('search-kit') }}</span>
+                                {%- endif -%}
+                            </td>
+                            <td data-title="{{ 'Results'|t('search-kit') }}" class="rightalign">
+                                {%- if search.foundNothing() -%}
+                                    <span class="sk-pill is-alert">{{ "None"|t('search-kit') }}</span>
+                                {%- else -%}
+                                    {{ search.resultCount|number_format }}
+                                {%- endif -%}
+                            </td>
+                            <td data-title="{{ 'Opened'|t('search-kit') }}" class="rightalign">
+                                {%- if search.wasClicked() -%}
+                                    <span class="sk-pill is-good">{{ search.clickCount }}</span>
+                                {%- else -%}
+                                    <span class="light">&mdash;</span>
+                                {%- endif -%}
+                            </td>
+                            <td data-title="{{ 'Took'|t('search-kit') }}" class="rightalign nowrap">
+                                <span class="{{ search.executionTime >= criteria.slowThreshold ? 'error' : 'light' }}">
+                                    {{- search.executionTime|number_format(1) }}ms
+                                </span>
+                            </td>
+                            <td data-title="{{ 'When'|t('search-kit') }}" class="nowrap">
+                                {% if search.dateCreated %}
+                                    <span title="{{ search.dateCreated|datetime('long') }}">{{ search.dateCreated|datetime('short') }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if pageCount > 1 %}
+                <nav class="sk-pagination">
+                    {% if page > 1 %}
+                        <a class="btn" href="{{ url('search-kit/analytics', craft.app.request.queryParams|merge({ page: page - 1 })) }}">{{ "Previous"|t('search-kit') }}</a>
+                    {% endif %}
+                    <span class="light">{{ "Page {page} of {pageCount}"|t('search-kit', { page: page, pageCount: pageCount }) }}</span>
+                    {% if page < pageCount %}
+                        <a class="btn" href="{{ url('search-kit/analytics', craft.app.request.queryParams|merge({ page: page + 1 })) }}">{{ "Next"|t('search-kit') }}</a>
+                    {% endif %}
+                </nav>
+            {% endif %}
+        {% endif %}
+    </div>
+
+    {% if canManage %}
+        <div class="pane">
+            <h2>{{ "Retention"|t('search-kit') }}</h2>
+            <p class="light">{{ "Recorded searches are deleted once they are older than the index keeps them for, which each index sets for itself on its own edit page."|t('search-kit') }}</p>
+            <p class="light">
+                {%- if criteria.indexId -%}
+                    {{ "Deleting here forgets every search recorded for the selected index, whatever dates or site are being shown."|t('search-kit') }}
+                {%- else -%}
+                    {{ "Deleting here forgets every search recorded for every index, whatever dates or site are being shown."|t('search-kit') }}
+                {%- endif -%}
+            </p>
+
+            <form method="post" accept-charset="UTF-8">
+                {{ csrfInput() }}
+                {{ actionInput('search-kit/analytics/clear') }}
+                {{ hiddenInput('indexId', criteria.indexId) }}
+                {% if criteria.indexId %}
+                    <button type="submit" class="btn caution" data-confirm="{{ 'Delete every search recorded for this index? The dates and site being shown do not limit this.'|t('search-kit') }}">
+                        {{ "Delete every search recorded for this index"|t('search-kit') }}
+                    </button>
+                {% else %}
+                    <button type="submit" class="btn caution" data-confirm="{{ 'Delete every search recorded for every index? The dates and site being shown do not limit this.'|t('search-kit') }}">
+                        {{ "Delete every search recorded for every index"|t('search-kit') }}
+                    </button>
+                {% endif %}
+            </form>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% css %}
+    .sk-filters { align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .sk-field { display: flex; flex-direction: column; gap: 5px; }
+    .sk-field-label { font-size: 12px; font-weight: 500; color: var(--medium-text-color); }
+    .sk-ranges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 24px; }
+    .sk-range { padding: 4px 10px; border-radius: var(--border-radius); font-size: 13px; color: var(--medium-text-color); background: var(--gray-100); }
+    .sk-range:hover { background: var(--gray-200); text-decoration: none; }
+    .sk-range.is-active { background: var(--gray-700); color: var(--white, #fff); }
+    .sk-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 24px; padding: 0; list-style: none; }
+    .sk-stat { padding: 14px 16px; border: 1px solid var(--hairline-color); border-radius: var(--border-radius); background: var(--pane-bg); }
+    .sk-stat-value { display: block; font-size: 24px; font-weight: 600; line-height: 1.15; }
+    .sk-stat-value small { font-size: 14px; font-weight: 400; color: var(--light-text-color); }
+    .sk-stat-label { display: block; margin-top: 4px; font-size: 12px; color: var(--medium-text-color); }
+    .sk-stat-note { display: block; margin-top: 2px; font-size: 11px; color: var(--light-text-color); }
+    .sk-stat.is-alert .sk-stat-value { color: var(--red-500); }
+    .sk-stat.is-good .sk-stat-value { color: var(--green-600); }
+    .sk-pane-header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .sk-pane-header h2 { margin: 0; }
+    .sk-pill { display: inline-block; padding: 1px 8px; border-radius: 9px; font-size: 12px; }
+    .sk-pill.is-alert { background: var(--red-100); color: var(--red-700); }
+    .sk-pill.is-good { background: var(--green-100); color: var(--green-700); }
+    .sk-pagination { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+{% endcss %}

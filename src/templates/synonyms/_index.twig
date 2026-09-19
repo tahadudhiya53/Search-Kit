@@ -1,0 +1,68 @@
+{% extends "_layouts/cp" %}
+
+{% set title = "Synonyms"|t('search-kit') %}
+{% set selectedSubnavItem = 'synonyms' %}
+
+{% block actionButton %}
+    {% if canManage %}
+        <a href="{{ url('search-kit/synonyms/new') }}" class="btn submit add icon">{{ "New synonym"|t('search-kit') }}</a>
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+    <div class="readable">
+        <p>{{ "A synonym makes a search for one word find the others as well. Two-way groups stand in for each other; a one-way group only expands into its replacements."|t('search-kit') }}</p>
+    </div>
+
+    {% if synonyms is empty %}
+        <p>{{ "No synonyms yet."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Terms"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Type"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Index"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Site"|t('search-kit') }}</th>
+                    <th scope="col"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for synonym in synonyms %}
+                    <tr>
+                        <th scope="row" data-title="{{ 'Terms'|t('search-kit') }}">
+                            <span class="status {{ synonym.enabled ? 'enabled' : 'disabled' }}"></span>
+                            <a href="{{ url('search-kit/synonyms/' ~ synonym.id) }}">{{ synonym }}</a>
+                        </th>
+                        <td data-title="{{ 'Type'|t('search-kit') }}">{{ synonym.type.label()|t('search-kit') }}</td>
+                        <td data-title="{{ 'Index'|t('search-kit') }}">
+                            {%- if synonym.indexId -%}
+                                {% set match = indexes|filter(i => i.id == synonym.indexId)|first %}
+                                {{ match ? match.name : synonym.indexId }}
+                            {%- else -%}
+                                {{ "All indexes"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td data-title="{{ 'Site'|t('search-kit') }}">
+                            {%- if synonym.siteId -%}
+                                {{ craft.app.sites.getSiteById(synonym.siteId).name ?? synonym.siteId }}
+                            {%- else -%}
+                                {{ "All sites"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td class="thin">
+                            {% if canManage %}
+                                <form method="post" accept-charset="UTF-8" class="inline-block">
+                                    {{ csrfInput() }}
+                                    {{ actionInput('search-kit/synonyms/delete') }}
+                                    {{ hiddenInput('synonymId', synonym.id) }}
+                                    <button type="submit" class="btn" data-confirm="{{ 'Delete this synonym?'|t('search-kit') }}">{{ "Delete"|t('search-kit') }}</button>
+                                </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "_layouts/cp" %}
+
+{% set title = "Rules"|t('search-kit') %}
+{% set selectedSubnavItem = 'rules' %}
+
+{% block actionButton %}
+    {% if canManage %}
+        <a href="{{ url('search-kit/rules/new') }}" class="btn submit add icon">{{ "New rule"|t('search-kit') }}</a>
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+    <div class="readable">
+        <p>{{ "A rule decides what a particular search returns: which results are moved up or down, which are placed at the top, which are left out, and where a search should be sent instead. Rules with a higher priority are applied first."|t('search-kit') }}</p>
+    </div>
+
+    {% if rules is empty %}
+        <p>{{ "No rules yet."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Rule"|t('search-kit') }}</th>
+                    <th scope="col">{{ "When someone searches"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Does"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Index"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Site"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Priority"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Schedule"|t('search-kit') }}</th>
+                    <th scope="col"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rule in rules %}
+                    <tr>
+                        <th scope="row" data-title="{{ 'Rule'|t('search-kit') }}">
+                            <span class="status {{ rule.enabled ? 'enabled' : 'disabled' }}"></span>
+                            <a href="{{ url('search-kit/rules/' ~ rule.id) }}">{{ rule.name }}</a>
+                        </th>
+                        <td data-title="{{ 'When someone searches'|t('search-kit') }}">
+                            {{ rule.matchType.label()|t('search-kit') }} <code>{{ rule.matchValue }}</code>
+                        </td>
+                        <td data-title="{{ 'Does'|t('search-kit') }}">
+                            {%- set done = [] %}
+                            {%- for action in rule.actions %}
+                                {%- set done = done|merge([action.type.label()|t('search-kit')]) %}
+                            {%- endfor %}
+                            {{ done|unique|join(', ') }}
+                        </td>
+                        <td data-title="{{ 'Index'|t('search-kit') }}">
+                            {%- set match = indexes|filter(i => i.id == rule.indexId)|first -%}
+                            {{ match ? match.name : rule.indexId }}
+                        </td>
+                        <td data-title="{{ 'Site'|t('search-kit') }}">
+                            {%- if rule.siteId -%}
+                                {{ craft.app.sites.getSiteById(rule.siteId).name ?? rule.siteId }}
+                            {%- else -%}
+                                {{ "All sites"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td data-title="{{ 'Priority'|t('search-kit') }}">{{ rule.priority }}</td>
+                        <td data-title="{{ 'Schedule'|t('search-kit') }}">
+                            {%- if rule.dateStart or rule.dateEnd -%}
+                                {{ rule.dateStart ? rule.dateStart|datetime('short') : "Now"|t('search-kit') }}
+                                &rarr;
+                                {{ rule.dateEnd ? rule.dateEnd|datetime('short') : "Ongoing"|t('search-kit') }}
+                            {%- else -%}
+                                {{ "Always"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td class="thin">
+                            {% if canManage %}
+                                <form method="post" accept-charset="UTF-8" class="inline-block">
+                                    {{ csrfInput() }}
+                                    {{ actionInput('search-kit/rules/delete') }}
+                                    {{ hiddenInput('ruleId', rule.id) }}
+                                    <button type="submit" class="btn" data-confirm="{{ 'Delete this rule?'|t('search-kit') }}">{{ "Delete"|t('search-kit') }}</button>
+                                </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+{% endblock %}

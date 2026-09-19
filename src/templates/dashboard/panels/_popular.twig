@@ -1,0 +1,33 @@
+{% import "search-kit/dashboard/_charts" as chart %}
+
+<div class="pane">
+    <div class="sk-pane-header">
+        <h2>{{ "Most searched for"|t('search-kit') }}</h2>
+        <a class="light" href="{{ url('search-kit/analytics', { indexId: criteria.indexId, siteId: criteria.siteId, dateFrom: activeFrom, dateTo: activeTo }) }}">{{ "See every search"|t('search-kit') }}</a>
+    </div>
+
+    {% if popularQueries is empty %}
+        <p class="zilch">{{ "Nothing has been searched for in this period."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Query"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Searches"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Found nothing"|t('search-kit') }}</th>
+                    <th scope="col" class="rightalign">{{ "Led to a click"|t('search-kit') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for insight in popularQueries %}
+                    <tr>
+                        <th scope="row">{{ chart.queryCell(insight.query) }}</th>
+                        <td class="rightalign">{{ insight.searches|number_format }}</td>
+                        <td class="rightalign">{{ (insight.zeroResultRate * 100)|number_format(0) }}%</td>
+                        <td class="rightalign">{{ (insight.clickThroughRate * 100)|number_format(0) }}%</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>

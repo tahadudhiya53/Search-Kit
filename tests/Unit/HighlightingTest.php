@@ -137,6 +137,35 @@ class HighlightingTest extends TestCase
         self::assertNull($this->highlighting->excerpt('<p></p>', ['winter']));
     }
 
+    public function testShowsMoreThanTheFirstMatchInALongValue(): void
+    {
+        $value = 'winter boots ' . str_repeat('padding ', 60) . 'winter sale ' . str_repeat('filler ', 60);
+
+        $excerpt = $this->highlighting->excerpt($value, ['winter'], 200);
+
+        self::assertStringContainsString('winter boots', $excerpt['snippet']);
+        self::assertStringContainsString('winter sale', $excerpt['snippet']);
+        self::assertStringContainsString(' … ', $excerpt['snippet'], 'Separate excerpts should be joined.');
+        self::assertSame(2, substr_count($excerpt['highlight'], '<mark>'));
+    }
+
+    public function testShowsNoMoreExcerptsThanAskedFor(): void
+    {
+        $value = str_repeat('winter ' . str_repeat('padding ', 30), 6);
+
+        $excerpt = $this->highlighting->excerpt($value, ['winter'], 200);
+
+        self::assertLessThanOrEqual(3, substr_count($excerpt['snippet'], 'winter'));
+        self::assertLessThanOrEqual(210, mb_strlen($excerpt['snippet']));
+    }
+
+    public function testMarksAPhraseAsOneRatherThanWordByWord(): void
+    {
+        $excerpt = $this->highlighting->excerpt('Buy winter boots today', ['winter boots', 'winter']);
+
+        self::assertSame('Buy <mark>winter boots</mark> today', $excerpt['highlight']);
+    }
+
     public function testCollapsesWhitespaceSoSnippetsReadAsText(): void
     {
         $excerpt = $this->highlighting->excerpt("Winter\n\n   boots", ['boots']);

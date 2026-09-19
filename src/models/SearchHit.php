@@ -14,7 +14,20 @@ class SearchHit extends Model
     public int $elementId;
     public ?int $siteId = null;
     public ?string $elementType = null;
+    /** @var float The provider's own relevance score, left exactly as it was reported. */
     public float $score = 0.0;
+
+    /** @var float How far search rules moved this result, kept apart from the provider's score. */
+    public float $scoreAdjustment = 0.0;
+
+    /** @var bool Whether a rule placed this result at a position of its own. */
+    public bool $pinned = false;
+
+    /** @var bool Whether a rule put this result in the search rather than the search finding it. */
+    public bool $promoted = false;
+
+    /** @var array<int,array<string,mixed>> What search rules did to this result, for explaining it. */
+    public array $ruleEffects = [];
 
     /** @var string[] Handles of the fields the provider matched on. */
     public array $matchedFields = [];
@@ -29,6 +42,22 @@ class SearchHit extends Model
     public array $providerData = [];
 
     public ?ElementInterface $element = null;
+
+    /**
+     * The score this result was ranked by: what the provider scored it, plus what the rules moved it.
+     */
+    public function getFinalScore(): float
+    {
+        return $this->score + $this->scoreAdjustment;
+    }
+
+    /**
+     * Whether a rule placed this result rather than the search matching it.
+     */
+    public function wasPlaced(): bool
+    {
+        return $this->pinned || $this->promoted;
+    }
 
     /**
      * A plain-text excerpt, from the named field or the best one available.
