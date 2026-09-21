@@ -55,6 +55,36 @@
         instructions: "Changing this requires a rebuild. Whatever the previous provider holds is left untouched."|t('search-kit'),
     }) }}
 
+    {% if index.getErrors('settings') %}
+        <ul class="errors">{% for error in index.getErrors('settings') %}<li>{{ error }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% for option in providerOptions %}
+        {{ hiddenInput('providerTypes[' ~ loop.index0 ~ ']', option.value) }}
+    {% endfor %}
+
+    {% for settings in providerSettings %}
+        <div data-provider-settings="{{ settings.type }}"{{ settings.type == index.provider ? '' : ' class="hidden"' }}>
+            {{ settings.html|raw }}
+        </div>
+    {% endfor %}
+
+    {% for type, capabilities in providerCapabilities %}
+        <div data-provider-settings="{{ type }}"{{ type == index.provider ? '' : ' class="hidden"' }}>
+            <div class="field">
+                <div class="heading">
+                    <label>{{ "What this provider can do"|t('search-kit') }}</label>
+                    <div class="instructions">
+                        <p>{{ "A search asking for anything not listed is refused rather than answered differently."|t('search-kit') }}</p>
+                    </div>
+                </div>
+                <ul class="bullets">
+                    {% for capability in capabilities %}<li>{{ capability|t('search-kit') }}</li>{% endfor %}
+                </ul>
+            </div>
+        </div>
+    {% endfor %}
+
     {{ forms.selectField({
         label: "Site"|t('search-kit'),
         id: 'siteId',
@@ -275,6 +305,38 @@
         instructions: "Milliseconds beyond which a search counts as slow."|t('search-kit'),
     }) }}
 
+    {{ forms.lightswitchField({
+        label: "Suggest what others searched for"|t('search-kit'),
+        id: 'analyticsSettings-suggestPopularQueries',
+        name: 'analyticsSettings[suggestPopularQueries]',
+        on: activity.suggestPopularQueries,
+        instructions: "Offer past searches as completions, ahead of the ones read from this index’s own words. Only a query that found something, had a result opened, and uses words published content still uses is ever offered, and only within the sites it was searched in."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Searches before it is offered"|t('search-kit'),
+        id: 'analyticsSettings-suggestionMinSearches',
+        name: 'analyticsSettings[suggestionMinSearches]',
+        type: 'number',
+        min: 2,
+        max: 10000,
+        size: 5,
+        value: activity.suggestionMinSearches,
+        instructions: "How many times a query must have been searched for. Nothing recorded says who searched, so this is a threshold on repeated searches rather than on how many people made them."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Days those searches must span"|t('search-kit'),
+        id: 'analyticsSettings-suggestionMinDays',
+        name: 'analyticsSettings[suggestionMinDays]',
+        type: 'number',
+        min: 1,
+        max: 365,
+        size: 4,
+        value: activity.suggestionMinDays,
+        instructions: "Separate days those searches must span, for the same reason."|t('search-kit'),
+    }) }}
+
     {% if not isNew %}
         <hr>
 
@@ -316,3 +378,21 @@
         <p>{{ "Rebuild and retry are run from the index list."|t('search-kit') }}</p>
     {% endif %}
 {% endblock %}
+
+{% js %}
+// Only the chosen provider's settings are shown; every provider's inputs are posted, and the
+// server keeps the chosen one's alone.
+(function() {
+    var select = document.getElementById('provider');
+
+    if (!select) {
+        return;
+    }
+
+    select.addEventListener('change', function() {
+        document.querySelectorAll('[data-provider-settings]').forEach(function(pane) {
+            pane.classList.toggle('hidden', pane.getAttribute('data-provider-settings') !== select.value);
+        });
+    });
+})();
+{% endjs %}
