@@ -37,6 +37,40 @@ class SearchFilterTest extends TestCase
         self::assertFalse(SearchFilter::make('section', FilterOperator::In, [null])->validate());
     }
 
+    public function testARangeNeedsABottomAndATop(): void
+    {
+        self::assertTrue(SearchFilter::make('price', FilterOperator::Between, [100, 500])->validate());
+        self::assertTrue(SearchFilter::make('postDate', FilterOperator::Between, [
+            new DateTime('-1 week'),
+            new DateTime(),
+        ])->validate());
+
+        // One bound is half a range, and three is not one at all.
+        self::assertFalse(SearchFilter::make('price', FilterOperator::Between, [100])->validate());
+        self::assertFalse(SearchFilter::make('price', FilterOperator::Between, [100, 500, 900])->validate());
+        self::assertFalse(SearchFilter::make('price', FilterOperator::Between, 100)->validate());
+        self::assertFalse(SearchFilter::make('price', FilterOperator::Between, [true, false])->validate());
+    }
+
+    public function testARangeRunningBackwardsIsRejected(): void
+    {
+        // A bottom above its top matches nothing, which no provider would report as a mistake.
+        self::assertFalse(SearchFilter::make('price', FilterOperator::Between, [500, 100])->validate());
+        self::assertFalse(SearchFilter::make('price', FilterOperator::Between, ['500', '100.5'])->validate());
+        self::assertFalse(SearchFilter::make('postDate', FilterOperator::Between, [
+            new DateTime('2024-06-01'),
+            new DateTime('2024-01-01'),
+        ])->validate());
+        self::assertFalse(SearchFilter::make('postDate', FilterOperator::Between, ['2024-06-01', '2024-01-01'])->validate());
+
+        // The bounds are inclusive, so a range of one value is a range.
+        self::assertTrue(SearchFilter::make('price', FilterOperator::Between, [100, 100])->validate());
+        self::assertTrue(SearchFilter::make('postDate', FilterOperator::Between, ['2024-01-01', '2024-06-01'])->validate());
+
+        // Text with no ordering every provider agrees on is left to the provider to judge.
+        self::assertTrue(SearchFilter::make('slug', FilterOperator::Between, ['zebra', 'apple'])->validate());
+    }
+
     public function testRejectsAListOperatorWithoutAList(): void
     {
         self::assertFalse(SearchFilter::make('section', FilterOperator::In, 'news')->validate());

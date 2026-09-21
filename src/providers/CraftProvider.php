@@ -5,6 +5,8 @@ namespace Tahadudhiya\SearchKit\providers;
 use Craft;
 use craft\base\ElementInterface;
 use craft\base\FieldInterface;
+use craft\db\Query;
+use craft\db\QueryAbortedException;
 use craft\elements\db\ElementQueryInterface;
 use craft\helpers\DateTimeHelper;
 use DateTimeInterface;
@@ -16,6 +18,8 @@ use Tahadudhiya\SearchKit\enums\SortDirection;
 use Tahadudhiya\SearchKit\errors\InvalidQueryException;
 use Tahadudhiya\SearchKit\errors\ProviderException;
 use Tahadudhiya\SearchKit\errors\SearchKitException;
+use Tahadudhiya\SearchKit\events\RegisterFilterCriteriaEvent;
+use Tahadudhiya\SearchKit\models\Facet;
 use Tahadudhiya\SearchKit\models\ParsedQuery;
 use Tahadudhiya\SearchKit\models\QueryTerm;
 use Tahadudhiya\SearchKit\models\SearchDocument;
@@ -36,12 +40,27 @@ use yii\base\Component as YiiComponent;
  */
 class CraftProvider extends SearchProvider
 {
+    public const EVENT_REGISTER_FILTER_CRITERIA = 'registerFilterCriteria';
+
     /** @var string The filter field naming the element types a search is restricted to. */
     public const FILTER_ELEMENT_TYPE = 'elementType';
 
+    /** @var string The filter field naming elements a result has to be related to. */
+    public const FILTER_RELATED_TO = 'relatedTo';
+
+    /** @var string The facet field counting results by the kind of element they are. */
+    public const FACET_ELEMENT_TYPE = 'elementType';
+
+    /** @var string The facet field counting results by the site they were found in. */
+    public const FACET_SITE_ID = 'siteId';
+
+    /** @var int How many values one facet may report per element type, commonest first. */
+    private const MAX_FACET_VALUES = 100;
+
     /**
-     * Element query criteria a filter may set. Anything outside this list is either a configured
-     * searchable field or rejected — no filter ever reaches the query builder unchecked.
+     * Element query criteria a filter may set on any element type. Anything outside this list, and
+     * outside what an integration registers for the type, is either a configured searchable field
+     * or rejected — no filter ever reaches the query builder unchecked.
      */
     private const CRITERIA = [
         'id', 'uid', 'title', 'slug', 'uri', 'level',
@@ -49,11 +68,20 @@ class CraftProvider extends SearchProvider
         'group', 'groupId', 'volume', 'volumeId', 'folderId', 'kind',
     ];
 
+    /** @var string[] The only things this provider reports that may be shown to a developer. */
+    private const DIAGNOSTICS = ['craftQuery', 'elementTypes', 'orderBy'];
+
     /** @var array<string,array<string,string|callable>> Sortable attributes per element type. */
     private array $_sortOptions = [];
 
+    /** @var array<string,string[]> Criteria a filter may name, per element type, for one request. */
+    private array $_criteria = [];
+
     /** @var array<string,FieldInterface|false> Custom fields resolved per element type and handle. */
     private array $_customFields = [];
+
+    /** @var array<string,string|false> Facet columns resolved per element type and field. */
+    private array $_facetColumns = [];
 
     public static function displayName(): string
     {
@@ -73,12 +101,32 @@ class CraftProvider extends SearchProvider
             ProviderCapability::Indexing,
             ProviderCapability::Filtering,
             ProviderCapability::Sorting,
+            ProviderCapability::Faceting,
             ProviderCapability::PartialMatching,
             ProviderCapability::PhraseMatching,
             ProviderCapability::TermExclusion,
             ProviderCapability::TermAlternation,
             ProviderCapability::ResultExclusion,
         ];
+    }
+
+    /**
+     * What Craft was asked, which is the query itself and the element types and ordering it ran
+     * over. This provider holds no credentials, and still nothing outside this list is shown.
+     */
+    public function diagnostics(array $metadata): array
+    {
+        $safe = [];
+
+        foreach (self::DIAGNOSTICS as $key) {
+            $value = $metadata[$key] ?? null;
+
+            if (is_string($value) || is_array($value)) {
+                $safe[$key] = $value;
+            }
+        }
+
+        return $safe;
     }
 
     public function search(SearchQuery $query, SearchIndex $index): SearchResult
@@ -162,6 +210,191 @@ class CraftProvider extends SearchProvider
                 'craftQuery' => $this->craftSyntax($query->getParsedQuery()),
             ],
         ]);
+    }
+
+    /**
+     * How the whole result set divides up by each field asked for, counted by the database rather
+     * than by reading results back. Counting runs over the search itself, so a facet describes
+     * every result rather than the page that was returned.
+     *
+     * @return Facet[]
+     */
+    public function facets(SearchQuery $query, SearchIndex $index): array
+    {
+        $indexed = $index->getElementTypes();
+
+        if ($indexed === []) {
+            throw new ProviderException("The “{$index->handle}” search index has no enabled searchable fields.");
+        }
+
+        $filters = $this->filtersByField($query);
+        $elementTypes = $this->elementTypes($indexed, $filters);
+
+        $counts = array_fill_keys($query->getFacets(), []);
+        $answered = [];
+
+        foreach ($elementTypes as $elementType) {
+            $applied = [];
+
+            try {
+                // No ordering: a count is the same whatever order it would have come back in, and
+                // leaving relevance out keeps Craft from scoring a result set nobody is reading.
+                $elementQuery = $this->createElementQuery($elementType, $query, $index, [], $filters, $applied);
+
+                if ($elementQuery === null) {
+                    continue;
+                }
+
+                $this->countFacets($elementQuery, $elementType, $query, $counts, $answered);
+            } catch (SearchKitException $e) {
+                throw $e;
+            } catch (Throwable $e) {
+                Craft::error("Craft could not count {$elementType}: {$e->getMessage()}", SearchKit::LOG_CATEGORY);
+                throw new ProviderException("Craft could not count results for {$elementType}.", 0, $e);
+            }
+        }
+
+        // A field nothing could be counted by is a mistake, not a facet that happens to be empty.
+        foreach ($query->getFacets() as $field) {
+            if ($elementTypes !== [] && !isset($answered[$field])) {
+                throw new InvalidQueryException(
+                    "“{$field}” cannot be counted in the “{$index->handle}” search index.",
+                    ['facets' => ["“{$field}” is not a column any element type this index covers holds."]],
+                );
+            }
+        }
+
+        return array_map(
+            static fn(string $field) => Facet::make($field, $counts[$field]),
+            $query->getFacets(),
+        );
+    }
+
+    /**
+     * @param class-string<ElementInterface> $elementType
+     * @param array<string,array<string,int>> $counts Value counts per facet field, added to here.
+     * @param array<string,true> $answered Filled with the facets this element type could answer.
+     */
+    private function countFacets(
+        ElementQueryInterface $elementQuery,
+        string $elementType,
+        SearchQuery $query,
+        array &$counts,
+        array &$answered,
+    ): void {
+        try {
+            // The prepared subquery is the search itself with no window on it, which is exactly
+            // what a facet counts over.
+            $prepared = (clone $elementQuery)->limit(null)->offset(null)->prepareSubquery();
+        } catch (QueryAbortedException) {
+            // Craft settled the query as matching nothing, which contributes no counts.
+            return;
+        }
+
+        foreach ($query->getFacets() as $field) {
+            if ($field === self::FACET_ELEMENT_TYPE) {
+                $answered[$field] = true;
+                $key = $elementType::refHandle() ?? $elementType;
+                $counts[$field][$key] = ($counts[$field][$key] ?? 0) + (int)(clone $elementQuery)->count();
+                continue;
+            }
+
+            $column = $this->facetColumn($prepared, $elementType, $field);
+
+            if ($column === null) {
+                continue;
+            }
+
+            $answered[$field] = true;
+
+            foreach ($this->groupedCounts($prepared, $column) as $value => $count) {
+                $counts[$field][$value] = ($counts[$field][$value] ?? 0) + $count;
+            }
+        }
+    }
+
+    /**
+     * One value count per row, commonest first. A result is one element in one site, so that is what
+     * is counted — the same thing the total counts.
+     *
+     * @return array<string,int>
+     */
+    private function groupedCounts(Query $prepared, string $column): array
+    {
+        $rows = (clone $prepared)
+            ->select(['searchKitValue' => $column, 'searchKitCount' => 'COUNT(DISTINCT [[elements_sites.id]])'])
+            ->groupBy([$column])
+            ->orderBy(['searchKitCount' => SORT_DESC])
+            ->limit(self::MAX_FACET_VALUES)
+            ->all();
+
+        $counts = [];
+
+        foreach ($rows as $row) {
+            // A row with nothing in the column is not a value anyone could filter by.
+            if (($row['searchKitValue'] ?? null) !== null && $row['searchKitValue'] !== '') {
+                $counts[(string)$row['searchKitValue']] = (int)$row['searchKitCount'];
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * The column a facet names, resolved against the tables the search itself joined rather than a
+     * list kept here — so an element type Craft or a plugin defines is counted by its own columns,
+     * and a name matching no column is refused rather than reaching the database.
+     *
+     * @param class-string<ElementInterface> $elementType
+     */
+    private function facetColumn(Query $prepared, string $elementType, string $field): ?string
+    {
+        if ($field === self::FACET_SITE_ID) {
+            return 'elements_sites.siteId';
+        }
+
+        $table = $this->elementTable($prepared);
+
+        if ($table === null) {
+            return null;
+        }
+
+        [$alias, $name] = $table;
+        $key = "$elementType:$field";
+
+        if (!isset($this->_facetColumns[$key])) {
+            $schema = Craft::$app->getDb()->getTableSchema($name);
+            $this->_facetColumns[$key] = $schema !== null && isset($schema->columns[$field])
+                ? "$alias.$field"
+                : false;
+        }
+
+        return $this->_facetColumns[$key] ?: null;
+    }
+
+    /**
+     * The element type's own table, as the prepared search joined it. Only the join Craft makes for
+     * an element's own table is read, so a facet can never reach a table a filter happened to bring in.
+     *
+     * @return array{string,string}|null The alias and the table name.
+     */
+    private function elementTable(Query $prepared): ?array
+    {
+        foreach ($prepared->join ?? [] as $join) {
+            $table = $join[1] ?? null;
+
+            if (!is_array($table) || count($table) !== 1) {
+                continue;
+            }
+
+            $alias = (string)array_key_first($table);
+
+            if (($join[2] ?? null) === "[[$alias.id]] = [[elements.id]]") {
+                return [$alias, (string)reset($table)];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -437,12 +670,12 @@ class CraftProvider extends SearchProvider
         array $filters,
         array &$applied,
     ): ?ElementQueryInterface {
-        // A null site on both the query and the index means every site, which is Craft's `'*'`.
-        $siteId = $query->siteId ?? $index->siteId;
+        // Nothing narrowing the search on either side means every site, which is Craft's `'*'`.
+        $scope = $query->getSiteScope($index->siteId);
 
         $elementQuery = $elementType::find()
             ->search($this->searchCriteria($query))
-            ->siteId($siteId ?? '*')
+            ->siteId($scope ?? '*')
             ->orderBy($this->orderBy($elementType, $sorts));
 
         if ($query->status !== null) {
@@ -529,7 +762,12 @@ class CraftProvider extends SearchProvider
         SearchIndex $index,
         string $elementType,
     ): bool {
-        if (in_array($filter->field, self::CRITERIA, true) && method_exists($elementQuery, $filter->field)) {
+        if ($filter->field === self::FILTER_RELATED_TO) {
+            $elementQuery->relatedTo($this->relatedTo($filter));
+            return true;
+        }
+
+        if (in_array($filter->field, $this->criteria($elementType), true) && method_exists($elementQuery, $filter->field)) {
             $elementQuery->{$filter->field}($this->criteriaValue($filter));
             return true;
         }
@@ -557,6 +795,62 @@ class CraftProvider extends SearchProvider
         $elementQuery->{$filter->field} = $this->criteriaValue($filter);
 
         return true;
+    }
+
+    /**
+     * The criteria a filter may name on an element type: SearchKit's own, plus whatever an
+     * integration registers for it. A criterion the installed element query does not actually
+     * define is still refused, so this can never depend on a plugin's version.
+     *
+     * @param class-string<ElementInterface> $elementType
+     * @return string[]
+     */
+    private function criteria(string $elementType): array
+    {
+        if (isset($this->_criteria[$elementType])) {
+            return $this->_criteria[$elementType];
+        }
+
+        $event = new RegisterFilterCriteriaEvent([
+            'elementType' => $elementType,
+            'criteria' => self::CRITERIA,
+        ]);
+
+        $this->trigger(self::EVENT_REGISTER_FILTER_CRITERIA, $event);
+
+        return $this->_criteria[$elementType] = array_values(array_unique($event->criteria));
+    }
+
+    /**
+     * A relationship constraint as element IDs and nothing else, so a filter can never hand Craft a
+     * relation criteria structure of its own.
+     *
+     * @return array<string,int[]>
+     */
+    private function relatedTo(SearchFilter $filter): array
+    {
+        // Craft has no “related to none of these”, so a negation is refused rather than approximated.
+        if (!in_array($filter->operator, [FilterOperator::Equals, FilterOperator::In], true)) {
+            throw new InvalidQueryException(
+                'Results cannot be filtered out by relationship.',
+                ['filters' => ['“relatedTo” only supports the equals and in operators.']],
+            );
+        }
+
+        $ids = [];
+
+        foreach (is_array($filter->value) ? $filter->value : [$filter->value] as $value) {
+            if (!is_int($value) && !(is_string($value) && ctype_digit($value))) {
+                throw new InvalidQueryException(
+                    'Related elements have to be named by ID.',
+                    ['filters' => ['“relatedTo” expects element IDs.']],
+                );
+            }
+
+            $ids[] = (int)$value;
+        }
+
+        return ['element' => $ids];
     }
 
     /**
@@ -603,6 +897,8 @@ class CraftProvider extends SearchProvider
             FilterOperator::GreaterThanOrEquals => ">= $value",
             FilterOperator::LessThan => "< $value",
             FilterOperator::LessThanOrEquals => "<= $value",
+            // Craft's own form for a range, so a bound is never written into SQL here.
+            FilterOperator::Between => ['and', '>= ' . ((array)$value)[0], '<= ' . ((array)$value)[1]],
         };
     }
 

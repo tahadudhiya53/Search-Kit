@@ -3,6 +3,7 @@
 namespace Tahadudhiya\SearchKit\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
+use Tahadudhiya\SearchKit\models\Facet;
 use Tahadudhiya\SearchKit\models\SearchHit;
 use Tahadudhiya\SearchKit\models\SearchResult;
 
@@ -86,5 +87,30 @@ class SearchResultTest extends TestCase
         self::assertFalse($hit->hasHighlights());
         self::assertNull($hit->getSnippet());
         self::assertNull($hit->getHighlight());
+    }
+
+    public function testACountedFieldIsOrderedCommonestFirstAndThenAlphabetically(): void
+    {
+        $facet = Facet::make('section', ['news' => 3, 'blog' => 9, 'about' => 3, 'empty' => 0]);
+
+        // Ties are broken by the value itself, so two searches never disagree about the order.
+        self::assertSame(
+            [
+                ['value' => 'blog', 'count' => 9],
+                ['value' => 'about', 'count' => 3],
+                ['value' => 'news', 'count' => 3],
+            ],
+            $facet->getValues(),
+        );
+
+        // A value nothing carries is not a value anyone could filter by.
+        self::assertSame(0, $facet->countFor('empty'));
+        self::assertSame(9, $facet->countFor('blog'));
+
+        $result = new SearchResult(['facets' => [$facet]]);
+
+        self::assertTrue($result->hasFacets());
+        self::assertSame($facet, $result->getFacet('section'));
+        self::assertNull($result->getFacet('nothing'));
     }
 }

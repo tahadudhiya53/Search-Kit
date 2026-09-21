@@ -122,6 +122,36 @@ class MultiSiteExperienceTest extends IntegrationTestCase
         self::assertContains('zqxsecondsiteword', $this->autocomplete($index, 'zqxsecondsite'));
     }
 
+    public function testCompletionsFollowTheSitesASearchNames(): void
+    {
+        [$first, $second] = $this->siteIds;
+        $index = $this->persistIndexWithFields([Entry::class => 'title'], CraftProvider::class);
+
+        $this->createTranslated('Zqxmulti Zqxfirstsiteword', 'Zqxmulti Zqxsecondsiteword');
+        $this->plugin()->getIndexing()->processPending($index);
+
+        // A list of sites is answered from exactly those sites: naming one leaves the other's words
+        // out, and naming both offers each site's own wording.
+        self::assertContains('zqxfirstsiteword', $this->completions($index, 'zqxfirstsite', [$first]));
+        self::assertSame([], $this->completions($index, 'zqxfirstsite', [$second]));
+
+        $both = [$first, $second];
+
+        self::assertContains('zqxfirstsiteword', $this->completions($index, 'zqxfirstsite', $both));
+        self::assertContains('zqxsecondsiteword', $this->completions($index, 'zqxsecondsite', $both));
+    }
+
+    /**
+     * @param int[] $siteIds
+     * @return string[]
+     */
+    private function completions(SearchIndex $index, string $text, array $siteIds): array
+    {
+        return $this->plugin()->getSearch()->autocomplete(
+            SearchQuery::create($index->handle, $text, ['sites' => $siteIds]),
+        );
+    }
+
     public function testASearchOfOneSiteNeverMatchesAnotherSitesWording(): void
     {
         [$first] = $this->siteIds;

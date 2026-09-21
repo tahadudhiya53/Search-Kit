@@ -32,6 +32,9 @@ class SearchResult extends Model
     /** @var string[] Queries worth trying instead, offered when this one found nothing. */
     public array $suggestions = [];
 
+    /** @var Facet[] How the whole result set divides up by each field the search asked to be counted by. */
+    public array $facets = [];
+
     /** @var ParsedQuery|null The terms this result was produced from, for explaining a match. */
     public ?ParsedQuery $parsedQuery = null;
 
@@ -40,6 +43,9 @@ class SearchResult extends Model
 
     /** @var RuleEvaluation[] Every search rule considered, matched or not, and what it did. */
     public array $rules = [];
+
+    /** @var SearchDebug|null What this search did, recorded as it happened, when it was diagnosed. */
+    public ?SearchDebug $debug = null;
 
     /**
      * @var string|null The token this search was recorded under, when it was. A template posts it
@@ -74,6 +80,22 @@ class SearchResult extends Model
             $this->rules,
             static fn(RuleEvaluation $evaluation) => $evaluation->matched,
         ));
+    }
+
+    public function getFacet(string $field): ?Facet
+    {
+        foreach ($this->facets as $facet) {
+            if ($facet->field === $field) {
+                return $facet;
+            }
+        }
+
+        return null;
+    }
+
+    public function hasFacets(): bool
+    {
+        return $this->facets !== [];
     }
 
     public function hasSuggestions(): bool

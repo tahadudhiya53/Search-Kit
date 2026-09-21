@@ -15,6 +15,11 @@ use yii\caching\TagDependency;
  * What else someone could search for: completions while they type, a correction for a word the
  * index does not hold, and something to try when a search found nothing. Every suggestion is a word
  * a publicly searchable document still uses, so none of them can lead to another empty result.
+ *
+ * An index may also offer back what has been searched for before. That is a query somebody typed
+ * being shown to the next person, so it is off unless it is asked for, and every word of it still
+ * has to be a word publicly searchable content uses — which is what keeps a query nobody else
+ * should see out of the box. Nothing about who searched is recorded or read to decide any of it.
  */
 class Suggestions extends Component
 {
@@ -29,41 +34,155 @@ class Suggestions extends Component
 
     private ?Terms $_terms = null;
     private ?Normalization $_normalization = null;
+    private ?Intelligence $_intelligence = null;
     private ?CacheInterface $_cache = null;
 
     /**
      * Completions for what has been typed so far: the whole query, with its last word finished.
+     * Each language the search covers reads what was typed for itself and is answered from the
+     * sites written in it, so a completion is always looked for in the form its own site holds.
      *
+     * Where the index offers back what has been searched for before, those come first: a whole
+     * query people have used and found something with beats a word completed out of the dictionary.
+     *
+     * @param int|int[]|null $siteId The sites being searched, or null for every site the index covers.
      * @return string[]
      */
-    public function autocomplete(SearchIndex $index, string $text, int $limit = 5, ?int $siteId = null): array
+    public function autocomplete(SearchIndex $index, string $text, int $limit = 5, int|array|null $siteId = null): array
     {
-        $words = $this->getNormalization()->terms($text);
-
-        if ($index->id === null || $words === [] || $limit < 1) {
+        if ($index->id === null || $limit < 1 || trim($text) === '') {
             return [];
         }
 
-        $prefix = (string)array_pop($words);
         $indexId = (int)$index->id;
-
-        $completions = $this->cached(
-            $indexId,
-            "autocomplete:$siteId:$prefix:$limit",
-            // One more than asked for, since what was typed is not a completion of itself.
-            fn() => $this->completionsOf($indexId, $siteId, $prefix, $limit + 1),
-        );
-
+        $fromHistory = $index->getAnalyticsSettings()->suggestPopularQueries;
+        $historical = [];
         $suggestions = [];
 
-        foreach ($completions as $completion) {
-            // What was typed is not a suggestion, however far through a word it happens to be.
-            if ($completion !== $prefix) {
-                $suggestions[] = implode(' ', [...$words, $completion]);
+        foreach ($this->readings($index, $siteId, $text) as $reading) {
+            $words = $reading['words'];
+
+            if ($fromHistory) {
+                $historical = [...$historical, ...$this->historical($index, $reading['sites'], implode(' ', $words), $limit)];
+            }
+
+            $prefix = (string)array_pop($words);
+
+            $completions = $this->cached(
+                $indexId,
+                'autocomplete:' . $this->scopeKey($reading['sites']) . ":$prefix:$limit",
+                // One more than asked for, since what was typed is not a completion of itself.
+                fn() => $this->completionsOf($indexId, $reading['sites'], $prefix, $limit + 1),
+            );
+
+            foreach ($completions as $completion) {
+                // What was typed is not a suggestion, however far through a word it happens to be.
+                if ($completion !== $prefix) {
+                    $suggestions[] = implode(' ', [...$words, $completion]);
+                }
             }
         }
 
-        return array_slice($suggestions, 0, $limit);
+        return array_slice(array_values(array_unique([...$historical, ...$suggestions])), 0, $limit);
+    }
+
+    /**
+     * Queries people have searched for that start the way this one does, kept only where every word
+     * of them is a word a publicly searchable document still uses. That check is the whole of what
+     * makes offering somebody else's wording safe, so it is exhaustive rather than sampled.
+     *
+     * The reading's own sites are passed through, not just used to check the words: a query is
+     * looked for among the searches of these sites, in the language they read it in, so one site's
+     * wording is never offered in another simply because its words are visible there too.
+     *
+     * @param int[]|null $sites The sites this reading answers for.
+     * @return string[]
+     */
+    private function historical(SearchIndex $index, ?array $sites, string $normalized, int $limit): array
+    {
+        $indexId = (int)$index->id;
+        $offered = [];
+
+        // A few more than needed, since one naming content nobody may find drops out below.
+        foreach ($this->getIntelligence()->getSuggestableQueries($index, $normalized, $limit * 2, $sites) as $candidate) {
+            // What was typed is not a suggestion, however popular it happens to be.
+            if ($candidate === $normalized) {
+                continue;
+            }
+
+            $words = array_values(array_unique($this->getNormalization()->tokenize($candidate)));
+
+            if ($words !== [] && count($this->getTerms()->visible($indexId, $sites, $words)) === count($words)) {
+                $offered[] = $candidate;
+            }
+
+            if (count($offered) >= $limit) {
+                break;
+            }
+        }
+
+        return $offered;
+    }
+
+    /**
+     * How the sites a search covers read what was typed, and which of them read it that way. Two
+     * languages that reduce the text to the same words are one reading, so a search is only asked
+     * more than once where the languages genuinely disagree about the word.
+     *
+     * @param int|int[]|null $siteId
+     * @return array<int,array{words:string[],sites:int[]|null}>
+     */
+    private function readings(SearchIndex $index, int|array|null $siteId, string $text): array
+    {
+        $scope = $siteId === null ? null : array_values(array_unique(array_map('intval', (array)$siteId)));
+        $languages = $this->getNormalization()->languagesFor($scope ?? ($index->siteId !== null ? [$index->siteId] : null));
+
+        // One language reads for every site in scope, which is every single-site search and every
+        // search of sites written in one language.
+        if (count($languages) === 1) {
+            $words = $this->getNormalization()->terms($text, $languages[0]);
+
+            return $words !== [] ? [['words' => $words, 'sites' => $scope]] : [];
+        }
+
+        $readings = [];
+
+        foreach ($scope ?? $this->allSiteIds() as $site) {
+            $words = $this->getNormalization()->terms($text, $this->getNormalization()->siteLanguage((int)$site));
+
+            if ($words === []) {
+                continue;
+            }
+
+            $key = implode(' ', $words);
+            $readings[$key]['words'] = $words;
+            $readings[$key]['sites'][] = (int)$site;
+        }
+
+        return array_values($readings);
+    }
+
+    /**
+     * @return int[]
+     */
+    protected function allSiteIds(): array
+    {
+        return array_map('intval', Craft::$app->getSites()->getAllSiteIds(true));
+    }
+
+    /**
+     * @param int|int[]|null $siteId
+     */
+    private function scopeKey(int|array|null $siteId): string
+    {
+        if ($siteId === null) {
+            return '*';
+        }
+
+        $sites = array_map('intval', (array)$siteId);
+        sort($sites);
+
+        return implode('-', $sites);
     }
 
     /**
@@ -71,8 +190,10 @@ class Suggestions extends Component
      * nothing needed correcting. A phrase, an alternation and an exclusion are all left alone: the
      * first two already say what they accept, and quietly widening what a search rules out would
      * change what it means.
+     *
+     * @param int|int[]|null $siteId The sites being searched, or null for every site the index covers.
      */
-    public function correct(ParsedQuery $parsed, SearchIndex $index, ?int $siteId = null): ?ParsedQuery
+    public function correct(ParsedQuery $parsed, SearchIndex $index, int|array|null $siteId = null): ?ParsedQuery
     {
         $settings = $index->getSearchSettings();
 
@@ -113,9 +234,10 @@ class Suggestions extends Component
      * Something to try instead of a query that found nothing: what it was probably meant to say,
      * the words it could be completed to, and the parts of it the index does hold.
      *
+     * @param int|int[]|null $siteId The sites being searched, or null for every site the index covers.
      * @return string[]
      */
-    public function forQuery(ParsedQuery $parsed, SearchIndex $index, ?int $siteId = null, int $limit = 5): array
+    public function forQuery(ParsedQuery $parsed, SearchIndex $index, int|array|null $siteId = null, int $limit = 5): array
     {
         if ($index->id === null || $limit < 1) {
             return [];
@@ -137,13 +259,19 @@ class Suggestions extends Component
                 continue;
             }
 
-            if ($this->getTerms()->isSearchable($indexId, $siteId, $term->text)) {
-                $known[] = $term->text;
+            // A term read in more than one language holds each reading, and the index knowing any
+            // one of them is the index knowing the word.
+            $held = $this->firstHeld($indexId, $siteId, $term->getTexts());
+
+            if ($held !== null) {
+                $known[] = $held;
                 continue;
             }
 
-            foreach ($this->completionsOf($indexId, $siteId, $term->text, $limit) as $completion) {
-                $suggestions[] = $completion;
+            foreach ($term->getTexts() as $text) {
+                foreach ($this->completionsOf($indexId, $siteId, $text, $limit) as $completion) {
+                    $suggestions[] = $completion;
+                }
             }
         }
 
@@ -161,11 +289,12 @@ class Suggestions extends Component
      * index already holds needs no correction, which is what keeps this off the path of a search
      * that found something.
      */
-    private function correction(string $term, SearchIndex $index, ?int $siteId, int $maxDistance): ?string
+    private function correction(string $term, SearchIndex $index, int|array|null $siteId, int $maxDistance): ?string
     {
         $indexId = (int)$index->id;
+        $key = 'correction:' . $this->scopeKey($siteId) . ":$term:$maxDistance";
 
-        return $this->cached($indexId, "correction:$siteId:$term:$maxDistance", function() use ($indexId, $siteId, $term, $maxDistance) {
+        return $this->cached($indexId, $key, function() use ($indexId, $siteId, $term, $maxDistance) {
             if ($this->getTerms()->isSearchable($indexId, $siteId, $term)) {
                 return null;
             }
@@ -203,7 +332,28 @@ class Suggestions extends Component
      *
      * @param string[] $candidates
      */
-    private function firstSearchable(int $indexId, ?int $siteId, array $candidates): ?string
+    /**
+     * The first of these words the index holds in a site anybody may find it in.
+     *
+     * @param int|int[]|null $siteId
+     * @param string[] $texts
+     */
+    private function firstHeld(int $indexId, int|array|null $siteId, array $texts): ?string
+    {
+        foreach ($texts as $text) {
+            if ($this->getTerms()->isSearchable($indexId, $siteId, $text)) {
+                return $text;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param int|int[]|null $siteId
+     * @param string[] $candidates
+     */
+    private function firstSearchable(int $indexId, int|array|null $siteId, array $candidates): ?string
     {
         foreach (array_chunk($candidates, self::CANDIDATE_BATCH) as $chunk) {
             $visible = $this->getTerms()->visible($indexId, $siteId, $chunk);
@@ -223,7 +373,11 @@ class Suggestions extends Component
      *
      * @return string[]
      */
-    private function completionsOf(int $indexId, ?int $siteId, string $prefix, int $limit): array
+    /**
+     * @param int|int[]|null $siteId
+     * @return string[]
+     */
+    private function completionsOf(int $indexId, int|array|null $siteId, string $prefix, int $limit): array
     {
         $found = [];
         $offset = 0;
@@ -353,6 +507,16 @@ class Suggestions extends Component
     public function getTerms(): Terms
     {
         return $this->_terms ??= $this->plugin()->getTerms();
+    }
+
+    public function setIntelligence(Intelligence $intelligence): void
+    {
+        $this->_intelligence = $intelligence;
+    }
+
+    public function getIntelligence(): Intelligence
+    {
+        return $this->_intelligence ??= $this->plugin()->getIntelligence();
     }
 
     public function setNormalization(Normalization $normalization): void

@@ -19,6 +19,9 @@ class SearchQuery extends Model
     public const MAX_LIMIT = 1000;
     public const MAX_SNIPPET_LENGTH = 1000;
 
+    /** @var int How many fields one search may be counted by. A facet is a request of its own. */
+    public const MAX_FACETS = 20;
+
     public string $text = '';
     public string $indexHandle = '';
 
@@ -40,8 +43,24 @@ class SearchQuery extends Model
     /** @var SearchSort[] */
     private array $_sorts = [];
 
+    /**
+     * @var int[]|null The sites to search, when several were named. Null means the whole scope,
+     * which `siteId` may still narrow to one. A list may only narrow an index's scope, never widen it.
+     */
+    private ?array $_siteIds = null;
+
+    /** @var string[] Fields the whole result set is counted by, on top of being searched. */
+    private array $_facets = [];
+
     /** @var ParsedQuery|null What the pipeline made of the text, once it has run. */
     private ?ParsedQuery $_parsed = null;
+
+    /**
+     * @var SearchDebug|null Where this search records what it did, when it is being diagnosed. It
+     * is not a search parameter: only PHP may turn it on, so nothing a template passes can ask a
+     * search to report how it was served.
+     */
+    private ?SearchDebug $_debug = null;
 
     /**
      * @var array<string,array{elementId:int,siteId:int|null}> Results the search must leave out. A
@@ -82,6 +101,8 @@ class SearchQuery extends Model
                 'highlight' => $this->highlight = $this->boolean($value, 'highlight'),
                 'snippetLength' => $this->snippetLength = $this->integer($value, 'snippetLength'),
                 'site', 'siteId' => $this->siteId = $this->resolveSiteId($value),
+                'sites', 'siteIds' => $this->setSiteIds($this->normalizeSites($value)),
+                'facets' => $this->setFacets($this->normalizeFacets($value)),
                 'filters' => $this->setFilters($this->normalizeFilters($value)),
                 'orderBy' => $this->setSorts($this->normalizeSorts($value)),
                 default => throw $this->rejected("“{$name}” is not a search parameter."),
@@ -136,6 +157,25 @@ class SearchQuery extends Model
     }
 
     /**
+     * Has this search record what it does as it does it. A copy of the query keeps recording into
+     * the same context, so a retry or a probe is reported alongside the search that made it.
+     */
+    public function startDebug(): SearchDebug
+    {
+        return $this->_debug ??= new SearchDebug();
+    }
+
+    public function getDebug(): ?SearchDebug
+    {
+        return $this->_debug;
+    }
+
+    public function isDebugging(): bool
+    {
+        return $this->_debug !== null;
+    }
+
+    /**
      * Results this search must not return, whatever their rank. This is not a search parameter: it
      * is how SearchKit expresses a removal to a provider, so it never reaches `configure()`.
      *
@@ -171,6 +211,86 @@ class SearchQuery extends Model
         $words = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($this->getNormalizedText()), -1, PREG_SPLIT_NO_EMPTY);
 
         return array_values(array_unique($words ?: []));
+    }
+
+    /**
+     * Every site this search covers, or null for every site there is. One site named on its own and
+     * a list of one are the same search; the index's own scope stands in when neither narrows it.
+     *
+     * @return int[]|null
+     */
+    public function getSiteScope(?int $indexSiteId = null): ?array
+    {
+        if ($this->_siteIds !== null) {
+            return $this->_siteIds;
+        }
+
+        $siteId = $this->siteId ?? $indexSiteId;
+
+        return $siteId !== null ? [$siteId] : null;
+    }
+
+    /**
+     * The one site this search covers, or null when it covers more than one. Anything recording a
+     * search against a single site asks this rather than reading `siteId`.
+     */
+    public function getSiteScopeId(?int $indexSiteId = null): ?int
+    {
+        $scope = $this->getSiteScope($indexSiteId);
+
+        return $scope !== null && count($scope) === 1 ? $scope[0] : null;
+    }
+
+    /**
+     * @return int[]|null
+     */
+    public function getSiteIds(): ?array
+    {
+        return $this->_siteIds;
+    }
+
+    /**
+     * @param int[] $siteIds
+     */
+    public function setSiteIds(array $siteIds): static
+    {
+        $siteIds = array_values(array_unique(array_map(static fn(mixed $siteId) => (int)$siteId, $siteIds)));
+
+        if ($siteIds === []) {
+            throw $this->rejected('A site list must name at least one site.', 'siteIds');
+        }
+
+        $this->_siteIds = $siteIds;
+
+        // A list of one is a search of one site, so everything already written for that reads it.
+        $this->siteId = count($siteIds) === 1 ? $siteIds[0] : null;
+
+        return $this;
+    }
+
+    /**
+     * The fields this search is counted by, on top of being answered.
+     *
+     * @return string[]
+     */
+    public function getFacets(): array
+    {
+        return $this->_facets;
+    }
+
+    /**
+     * @param string[] $facets
+     */
+    public function setFacets(array $facets): static
+    {
+        $this->_facets = array_values(array_unique($facets));
+
+        return $this;
+    }
+
+    public function hasFacets(): bool
+    {
+        return $this->_facets !== [];
     }
 
     /**
@@ -287,6 +407,9 @@ class SearchQuery extends Model
             [['snippetLength'], 'integer', 'min' => 1, 'max' => self::MAX_SNIPPET_LENGTH],
             [['siteId'], 'integer', 'min' => 1],
             [['status'], 'string', 'max' => 255],
+            // Neither reads an attribute of its own, so an empty one must not skip them.
+            [['siteId'], 'validateSites', 'skipOnEmpty' => false],
+            [['siteId'], 'validateFacets', 'skipOnEmpty' => false],
         ];
     }
 
@@ -306,6 +429,35 @@ class SearchQuery extends Model
         }
 
         parent::afterValidate();
+    }
+
+    /**
+     * Every site in a list has to be a site, and the list has to stay within what one search can
+     * reasonably cover.
+     */
+    public function validateSites(): void
+    {
+        foreach ($this->_siteIds ?? [] as $siteId) {
+            if ($siteId < 1) {
+                $this->addError('siteIds', 'A site must be named by its ID.');
+                return;
+            }
+        }
+    }
+
+    public function validateFacets(): void
+    {
+        if (count($this->_facets) > self::MAX_FACETS) {
+            $this->addError('facets', 'A search may be counted by at most ' . self::MAX_FACETS . ' fields.');
+            return;
+        }
+
+        foreach ($this->_facets as $facet) {
+            if (trim($facet) === '') {
+                $this->addError('facets', 'A facet must name a field.');
+                return;
+            }
+        }
     }
 
     public function validateText(string $attribute): void
@@ -364,6 +516,42 @@ class SearchQuery extends Model
         }
 
         return trim($value);
+    }
+
+    /**
+     * Sites as handles, IDs or Site models — or the comma-separated list a request carries one in.
+     *
+     * @return int[]
+     */
+    private function normalizeSites(mixed $sites): array
+    {
+        if (is_string($sites)) {
+            $sites = array_filter(array_map('trim', explode(',', $sites)));
+        }
+
+        if (!is_array($sites) || $sites === []) {
+            throw $this->rejected('Sites must be given as a list of handles or IDs.', 'siteIds');
+        }
+
+        return array_map(fn(mixed $site) => $this->resolveSiteId($site) ?? 0, $sites);
+    }
+
+    /**
+     * Facets as a list, or as the comma-separated line a request carries one in.
+     *
+     * @return string[]
+     */
+    private function normalizeFacets(mixed $facets): array
+    {
+        if (is_string($facets)) {
+            $facets = array_filter(array_map('trim', explode(',', $facets)));
+        }
+
+        if (!is_array($facets) || $facets === []) {
+            throw $this->rejected('Facets must name at least one field.', 'facets');
+        }
+
+        return array_map(fn(mixed $facet) => $this->text($facet, 'facets') ?? '', $facets);
     }
 
     private function resolveSiteId(mixed $site): ?int

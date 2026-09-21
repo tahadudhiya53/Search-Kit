@@ -16,7 +16,7 @@ class StubTerms extends Terms
     /** @var string[] Words no publicly searchable document uses. */
     public array $hidden = [];
 
-    public function startingWith(int $indexId, ?int $siteId, string $prefix, int $limit, int $offset = 0): array
+    public function startingWith(int $indexId, int|array|null $siteId, string $prefix, int $limit, int $offset = 0): array
     {
         $matches = $this->ordered(
             array_filter($this->words, static fn(string $word) => str_starts_with($word, $prefix)),
@@ -25,7 +25,7 @@ class StubTerms extends Terms
         return array_slice($matches, $offset, $limit);
     }
 
-    public function withinLengthOf(int $indexId, ?int $siteId, string $term, int $maxDistance): array
+    public function withinLengthOf(int $indexId, int|array|null $siteId, string $term, int $maxDistance): array
     {
         $length = mb_strlen($term);
 
@@ -35,7 +35,7 @@ class StubTerms extends Terms
         ));
     }
 
-    public function visible(int $indexId, ?int $siteId, array $terms): array
+    public function visible(int $indexId, int|array|null $siteId, array $terms): array
     {
         return array_values(array_filter(
             $terms,
@@ -43,7 +43,7 @@ class StubTerms extends Terms
         ));
     }
 
-    public function isSearchable(int $indexId, ?int $siteId, string $term): bool
+    public function isSearchable(int $indexId, int|array|null $siteId, string $term): bool
     {
         return $this->visible($indexId, $siteId, [$term]) !== [];
     }
