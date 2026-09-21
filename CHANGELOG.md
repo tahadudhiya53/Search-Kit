@@ -11,6 +11,18 @@
 - Database-backed search indexes and searchable field configuration, including field weighting.
 - A search provider backed by Craft's own search index, declaring only the capabilities Craft can
   actually serve.
+- A search provider backed by a Meilisearch server, giving each index a store of its own along with
+  Meilisearch's highlighting, typo tolerance and relevance scoring. Meilisearch accepts a change and
+  applies it afterwards, so every write is followed until it is confirmed: an indexing operation is
+  only settled once the document has actually landed, and a rebuild waits for anything still queued
+  before discarding the index it replaces. Field weights become the order
+  of its searchable attributes, and sorting is ranked ahead of relevance so an explicit ordering is
+  an instruction rather than a tiebreaker.
+- Provider settings, declared by the provider itself and edited on the index alongside everything
+  else. They are validated before they are stored, so an address a provider cannot be built from is
+  a save error rather than something discovered the next time somebody searches. A Meilisearch API
+  key must name an environment variable, so the key is never written to the database, shown in the
+  control panel, or reported by the debugger.
 - Explicit site scope on search indexes: an index covers one site or every site, and a query can
   narrow that scope but not widen it.
 - Indexing and content synchronisation: search indexes follow every element save, delete and
@@ -207,8 +219,135 @@
   saved for them alone, and decides nothing about what anybody may see. Dragging uses Craft's own
   drag sorting; everything else works without JavaScript.
 
+- Search intelligence: a control panel page reading recorded activity a step further, and the same
+  readings from PHP. A quality score out of 100 from three measured shares of the period — searches
+  that found something, searches a result was opened from, and searches inside the slow threshold of
+  their own index — weighted 0.5, 0.3 and 0.2 as an explicit product judgement rather than a fitted
+  model, with any part nothing was recorded about left out and the remaining weights shared out again
+  rather than scored as zero. Over several indexes, engagement is measured only over the searches
+  whose index follows opened results, with that subset as its denominator, and speed judges each
+  search by its own index's threshold, so two indexes that disagree are not both measured against one
+  of the two numbers. Anomaly detection comparing the
+  last window with the one before it on zero-result rate, volume and response time, where a window
+  with too few searches behind it is not compared at all and the only thing reported from an empty
+  one is search having stopped. Content gaps: popular queries that come back with nothing, or with
+  nothing anybody opens. Synonym discovery from queries people open the same results from, offered
+  with its evidence for an administrator to decide on and never applied; pairs are built within one
+  site scope, so what people did in one site is never weighed against what they did in another, and
+  each candidate names the scope it was observed in. Recommendations — improve
+  the content, create a rule, create a synonym, promote a result — each carrying the numbers it was
+  read from. And a reading of what queries are after, from cue words and part numbers, which
+  reports the words that decided it, says nothing at all for a query pointing equally two ways, and
+  never affects a search.
+- Completions drawn from what has been searched for before, ahead of the ones read from the index's
+  own words. Off until an index asks for it, since it shows one person's wording to the next: a past
+  query is only offered once it found results, something was opened from it, it was searched for
+  repeatedly across separate days, and every word of it is still a word publicly searchable content
+  uses. They are scoped to the sites being suggested for and read in those sites' language, so a
+  query from one site is never offered in another.
+- A search debugger: a control panel page that runs a real search and explains it. The search
+  records what it does as it does it — how the query normalized, the terms the provider was given,
+  every call made to the provider with the window it asked for and what came back, the time each
+  stage took, every rule considered and what each of its actions did, and for each result what it
+  matched on, the provider's own score, what the rules moved it by and what it was ranked by.
+  What SearchKit kept out is listed with the reason: the rule that removed it before the search ran,
+  or that a result found could not be shown in the site and status asked for. What was typed is
+  always kept beside what a correction searched for instead, a result a rule placed is explained as
+  placed rather than scored, and a provider is asked which of its diagnostics may be shown rather
+  than having its metadata reported as it stands. It is governed by a permission of its own, shows
+  no provider settings, and a search run to diagnose one is not counted as search activity.
+
+- An HTTP search endpoint, at `/search-kit/api/search`, taking an index, a query, filters, sorting
+  and paging, and answering with the result as plain data. It runs the same search service PHP and
+  Twig run, so anything the search API rejects is rejected there in the same words. A hit reports
+  what matched, how it ranked, and the element's title and URL — field values are not part of it.
+  Every failure has one shape and the status that goes with it, and an unexpected one is logged
+  rather than described.
+- Database-backed API keys, created and revoked from the control panel under a permission of their
+  own. A key is shown once and stored only as an irreversible digest, so it can never be shown,
+  recovered or logged again. It is scoped to the indexes it may search — one it may not search is
+  reported as though it were not there — carries a rate limit in requests a minute, and is refused
+  exactly as an unknown key is once it is disabled. It travels in the `Authorization` header alone,
+  and its use is recorded at most once a minute so searching stays a read.
+- A GraphQL query, `searchKitSearch`, added to Craft's own GraphQL API and resolved through the same
+  search service. Each search index is a schema component, so a schema decides which indexes may be
+  searched; an index it does not name is reported as though it were not there. A site the schema
+  does not allow cannot be searched, and a search covering every site is refused unless the schema
+  allows every site. A hit names its element and how it ranked, leaving the content behind it to
+  Craft's own element queries, where the schema decides which fields may be read.
+- Optional Craft Commerce support, as an integration rather than a dependency. SearchKit's core
+  names no Commerce class — the two class names in the codebase are strings inside one service — so
+  nothing can autoload Commerce that is not installed, and without the Commerce plugin that service
+  registers nothing at all. Where Commerce is installed, products and variants become indexable
+  element types and are then configured, indexed, searched, merchandised, recorded, explained and
+  served over both APIs by the machinery every other element type uses: no second search path, no
+  second rules engine, no Commerce endpoints. Verified against Commerce 5.7.4.
+- Commerce filter criteria, resolved against the query the installed Commerce actually defines
+  rather than a fixed list. Products can be filtered by `defaultSku`, `defaultPrice` and their
+  default dimensions; variants by `sku`, `price`, `stock`, `hasStock`, `hasUnlimitedStock`,
+  `inventoryTracked`, `availableForPurchase`, `isDefault`, `productId`, quantity limits and
+  dimensions. Product type and category go through the `type`, `typeId` and `relatedTo` criteria
+  every element type already has. Promotional and sale pricing, `forCustomer` and `hasVariant` are
+  refused rather than offered: what a shopper pays depends on catalog pricing rules and on who is
+  asking, so an anonymous search has no deterministic answer, and `hasVariant` takes a query rather
+  than a value.
+- Changes to a product's **default** variant reach the product, because its searchable attributes
+  are the values Commerce fills from that variant — but only where an index searches one of them,
+  since a custom field on the product's own layout cannot carry variant data. A variant that is not
+  the default contributes nothing to a product's document and is not followed, so the product is
+  not even loaded. A failure there can never fail a Commerce save.
+- Filtering by relationship on the Craft provider, through `relatedTo`. It names elements by ID only
+  and cannot be negated, so a search can be narrowed to a category or anything else a relation field
+  points at without a relation criteria structure ever reaching Craft from a caller.
+- A seam for registering further element query criteria per element type, which is how an
+  integration extends what the Craft provider will filter on without the provider knowing what
+  defines them.
+- Faceted counts: a search can be counted by one or more fields, and the counts describe the whole
+  result set rather than the page it returned. Counting is a provider capability — a provider that
+  cannot count is refused rather than answered with nothing. The Craft provider counts by the kind
+  of element, by site, and by any column the element type's own table holds, read from the search
+  Craft itself prepared rather than from a list kept in SearchKit; Meilisearch counts by its own
+  attributes. Counts are exposed to Twig, PHP, REST and GraphQL.
+- Range filters, through a `between` operator taking a lowest and a highest value and including
+  both. Both providers express it in their own dialect, so a price range works on either.
+- Searching several named sites at once, given as handles, IDs or `Site` models. A list may narrow
+  an index's scope but never widen it, every result still carries its own site, and a rule acts only
+  in a site the search actually named — including a redirect, which still needs a rule covering the
+  whole search.
+- Language-aware analysis. Craft folds characters differently per language, so content is now
+  reduced in the language of the site it belongs to and a query is read in the language of the site
+  it is searching, which is what Craft's own index does. Configured synonyms are held in the
+  language of the site they were written for, and the built-in English stop word list is only
+  applied to a search read in English. A Meilisearch rebuild declares the languages the index's
+  content is written in, so Meilisearch tokenizes and stems it accordingly.
+- Provider capabilities are shown on the index's own page, so what an index can be asked for is
+  visible where its provider is chosen rather than discovered when a search is refused.
+- A search covering sites written in different languages is read in each of them. No single language
+  stands in for the others: every language the searched sites use reads the text for itself, and a
+  word two of them fold differently is accepted in both readings, so neither site is searched for
+  the other's spelling. Where the languages agree the term stays one term, and a provider that
+  cannot be given alternatives refuses such a query rather than running one reading as the other.
+  Where the languages do not read the text as the same words at all — a word to one of them and
+  nothing to another — the search is refused as an invalid query rather than run as either reading.
+- A synonym group written for one site is no longer applied to a search covering other sites, where
+  it would have returned results those sites never had on their own. An expansion is applied only
+  where it holds in every site being searched, and what was held back is reported on the result and
+  in the debugger.
+- Completions, corrections and no-result suggestions read only the sites the search covers, so a
+  word another site holds is never offered — and each language reads what was typed for itself.
+- The built-in English stop word list is applied only where every language being searched is
+  English. A configured stop word still applies in any language, in each language's reading of it.
+- A range written backwards is refused rather than quietly matching nothing, for numbers and dates.
+- A GraphQL query refused over its parameters now says which one and why, as the REST layer does.
+
 ### Fixed
 
+- A search covering more than one site recorded the application's language as the language it was
+  read in, and recorded that language for every site-specific synonym group as well. A search
+  spanning two languages now records neither a site nor a language, which needs
+  `searchkit_searchevents.language` to be nullable.
 - A newly saved search index reported a configuration generation it was not on, so a rebuild started
   from it could never report the index as current.
+- Every search index was saved with the same placeholder identifier instead of one of its own,
+  which a GraphQL schema now relies on to tell one index from another.
 

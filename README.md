@@ -7,17 +7,30 @@ Search management and intelligence for Craft CMS.
 **Early development.** SearchKit can run searches from PHP and Twig, and keep indexes in step with
 Craft content. It provides search providers behind a single interface, provider-independent query,
 result and document objects, database-backed search indexes and searchable field configuration, a
-search service that runs a query through an index's provider, filtering, sorting, pagination,
-snippets and highlighting, and queue-backed indexing that follows every content change. What a
+search service that runs a query through an index's provider, filtering, ranges, sorting,
+pagination, faceted counts, snippets and highlighting, and queue-backed indexing that follows every
+content change. A search covers one site, several of them, or every site an index holds, and query
+text is read in the language of the site being searched. What a
 visitor types goes through a query pipeline of its own — normalization, operators, stop words,
 synonyms and typo correction — and a search that finds nothing offers something else to try. Search
 rules give deliberate control over what a particular query returns: boost, bury, hide, pin, promote
 and redirect, on a schedule and in a fixed priority order. Every search can be recorded — what was
 searched for, what came back and what was opened, and nothing about who searched — and read back as
 popular queries, zero-result queries, content gaps, trends and response times, on a control panel
-dashboard that shows how search is doing at a glance. Indexes, rules, synonyms, search behaviour and
-what is recorded are managed from the control panel or from PHP. A provider backed by Craft's own
-search index ships with it.
+dashboard that shows how search is doing at a glance. What has been recorded is read a step
+further on a page of its own: a quality score out of 100 from real measurements, what has changed
+against the week before, where demand is going unanswered, which two queries look like the same
+thing, and what to do about each — every one of them shown with the numbers it was read from. A
+search debugger runs a real search and
+explains it: how the query was read, what the provider was asked and answered, which rules matched
+and what they did, and what every result was ranked by. The same search is reachable over HTTP,
+authenticated with a revocable API key that is scoped to indexes and held to a rate, and through
+Craft's own GraphQL API, where a schema decides which indexes and sites it may search. Indexes,
+rules, synonyms, API keys, search behaviour and what is recorded are managed from the control panel
+or from PHP. Two providers ship with it: one backed by Craft's own search index, and one backed by a
+Meilisearch server. Where Craft Commerce is installed, products and variants are indexed, filtered
+and merchandised by that same machinery, through an integration the rest of SearchKit knows nothing
+about.
 
 See [Limitations](#limitations) for what is not there yet.
 
@@ -62,7 +75,7 @@ $result = SearchKit::getInstance()->getSearch()->search(
 The bundled provider searches Craft's own search index, so SearchKit works without any external
 service. Craft scores results itself, which sets real limits on what this provider can honour:
 
-- It searches, indexes, filters and sorts, using Craft's own element query criteria, field
+- It searches, indexes, filters, counts and sorts, using Craft's own element query criteria, field
   conditions and sort options. It also honours phrases, exclusions, alternation and partial
   matching, which it expresses through Craft's own search syntax rather than through SQL of
   SearchKit's making.
@@ -90,6 +103,68 @@ service. Craft scores results itself, which sets real limits on what this provid
   one index updates the same Craft keywords the other would read, and removing an element type from
   an index stops that index searching it without removing anything Craft has stored.
 
+### The Meilisearch provider
+
+Serves an index from a [Meilisearch](https://www.meilisearch.com) server (1.x). Meilisearch scores,
+highlights, counts and tolerates typos itself, so this provider honours far more of the search API
+than the Craft one does — and every SearchKit index gets a store of its own.
+
+A rebuild also tells Meilisearch which languages the index's content is written in, taken from the
+sites it covers, so words are tokenized and stemmed the way those languages work. A site in a
+language Meilisearch does not know is simply not declared rather than failing the rebuild.
+
+Choose **Meilisearch** as an index's provider and fill in its settings:
+
+| Setting | What it is |
+|---|---|
+| Server address | Where Meilisearch is reachable, e.g. `http://localhost:7700` or `$MEILISEARCH_URL`. |
+| API key | **Must name an environment variable**, written as `$MEILISEARCH_API_KEY`. Leave it empty for a server that needs no key. |
+| Index prefix | Put in front of the Meilisearch index name, so two environments can share one server. |
+
+A key typed in rather than named is refused at save, so the key itself is never stored in the
+database, never shown back in the control panel, and never reported by the debugger:
+
+```
+# .env
+MEILISEARCH_URL=http://localhost:7700
+MEILISEARCH_API_KEY=your-search-key
+```
+
+One SearchKit index maps to one Meilisearch index, named `prefix` + the index handle. Each element,
+in each site, is one document: its identity (`elementId`, `siteId`, `elementType`) alongside the
+configured searchable values under a `fields` object, so a field handle can never collide with the
+identity SearchKit needs back.
+
+**Rebuild the index after configuring it.** A rebuild waits for anything Meilisearch still has
+queued against the index, discards it and recreates it, and that is the moment its searchable,
+filterable and sortable attributes are settled from the index's searchable fields. Field weights become the *order* of Meilisearch's searchable attributes —
+the heaviest field first — which is how Meilisearch expresses that one field matters more than
+another. Sorting is moved ahead of relevance in the ranking rules, so `orderBy` is an instruction
+rather than a tiebreaker.
+
+Filters and sorts may name `id`, `siteId`, `elementType`, or any field the index searches. Anything
+else is rejected rather than quietly dropped.
+
+What it cannot do:
+
+- **No `OR` between terms**, so a query using the operator is refused — and because SearchKit
+  expresses synonyms as alternatives, **configured synonyms are not applied** to an index this
+  provider serves. Meilisearch has synonyms of its own, which SearchKit does not manage.
+- **No per-term partial matching**, so `boot*` is refused and the index's partial matching setting
+  is not applied. Meilisearch matches word prefixes in its own way instead.
+- **Typo tolerance is Meilisearch's.** It declares the capability, so SearchKit never corrects a
+  search of one of its indexes, and the index's own typo settings do not reach it.
+- **Text cannot be compared.** Searchable values are stored as the keywords a Craft field produced,
+  so `>`, `>=`, `<` and `<=` are refused on them and accepted only on `id` and `siteId`.
+- **Two round trips per document.** Meilisearch accepts a write and applies it afterwards, and it
+  can still refuse it at that point, so every write is followed until Meilisearch confirms it —
+  otherwise SearchKit would settle an indexing operation that never landed. A rebuild of a large
+  site is therefore a long run of small HTTP calls.
+- **Totals stop being exact past Meilisearch's `maxTotalHits`**, 1000 by default, which also caps
+  how deep results can be paged. SearchKit does not change that setting.
+- Scores are Meilisearch's ranking scores, between 0 and 1, so a rule's boost or bury amount has to
+  be chosen on that scale rather than on the one Craft scores with.
+
 ### Sites
 
 An index declares the sites it covers, and a query may narrow that scope but never widen it:
@@ -101,6 +176,14 @@ An index declares the sites it covers, and a query may narrow that scope but nev
 | a site ID | `null` | the index's site |
 | a site ID | the same site ID | that site |
 | a site ID | a different site ID | rejected as an invalid query |
+
+A search can also name several sites at once with `sites`, given as site handles, IDs or `Site`
+models — or as a comma-separated list, which is how a request carries one. Every site named must be
+one the index covers, and naming one site this way is exactly the same search as `site`:
+
+```twig
+{% set results = craft.searchKit.search('siteSearch', q, { sites: ['default', 'demoUk'] }) %}
+```
 
 There is no current-site fallback: an index is explicit about its own scope. The same scope applies
 when indexing — an index refuses an element belonging to a site it does not cover.
@@ -198,14 +281,18 @@ A filter is a field, an operator and a value. Templates can leave the operator o
     filters: {
         elementType: 'entry',            {# any of: eq #}
         section: ['news', 'blog'],       {# a list means any of them: in #}
-        postDate: { gte: '2024-01-01' }, {# eq, neq, in, notIn, gt, gte, lt, lte #}
+        postDate: { gte: '2024-01-01' }, {# eq, neq, in, notIn, gt, gte, lt, lte, between #}
+        price: { between: [100, 500] },  {# a range, both bounds included #}
     },
 }) %}
 ```
 
-Operators are `eq`, `neq`, `in`, `notIn`, `gt`, `gte`, `lt` and `lte`. A value must be a string,
-number, boolean or date; `in` and `notIn` need a non-empty list; the four comparisons need something
-with an order to it. Null is rejected, because a provider would quietly ignore it. There is no
+Operators are `eq`, `neq`, `in`, `notIn`, `gt`, `gte`, `lt`, `lte` and `between`. A value must be a
+string, number, boolean or date; `in` and `notIn` need a non-empty list; `between` needs exactly a
+lowest and a highest value and includes both; the comparisons need something with an order to it. A
+range written backwards — `[500, 100]` — is refused rather than quietly matching nothing, for numbers
+and for dates, whether the dates are `DateTime`s or written out as `2024-01-01`. Text with no
+ordering every provider agrees on is left to the provider to judge. Null is rejected, because a provider would quietly ignore it. There is no
 “contains” operator — matching text is what the search itself does.
 
 What may be filtered on is decided by the provider. The Craft provider accepts:
@@ -215,14 +302,55 @@ What may be filtered on is decided by the provider. The Craft provider accepts:
 - The element criteria Craft itself exposes: `id`, `uid`, `title`, `slug`, `uri`, `level`,
   `section`, `sectionId`, `type`, `typeId`, `authorId`, `group`, `groupId`, `volume`, `volumeId`,
   `folderId` and `kind`.
+- `relatedTo`, naming elements a result has to be related to, by ID — which is how a search is
+  narrowed to a category, a tag, or anything else a relation field points at. It takes `eq` or `in`
+  and element IDs only, and it cannot be negated: Craft has no “related to none of these”.
 - Any custom field the index is configured to search, as long as that field is on one of the
   element type's own field layouts. The filter becomes Craft's own condition for that field type,
   so it behaves exactly as the same parameter would on an element query.
+- Anything an integration registers for a particular element type — see
+  [Craft Commerce](#craft-commerce).
 
 Nothing else reaches the query builder. A field no element type in the index can be asked about is
 rejected, a filter that rules an element type out removes it from the search, and a field type Craft
 stores no queryable value for — a Matrix field, for instance — is rejected rather than quietly
 matching nothing. One field may only be filtered on once.
+
+### Facets
+
+A facet counts how the whole result set divides up by a field, which is what a filter can then be
+offered from. Ask for one by naming the fields to count, and read the counts back off the result:
+
+```twig
+{% set results = craft.searchKit.search('siteSearch', q, {
+    facets: ['sectionId', 'elementType'],
+}) %}
+
+{% for value in results.getFacet('sectionId').values %}
+    <a href="?q={{ q }}&section={{ value.value }}">{{ value.value }} ({{ value.count }})</a>
+{% endfor %}
+```
+
+Counts describe the search, not the page: they are the same whatever `limit` and `offset` are, and
+they are narrowed by exactly the filters the search was narrowed by — so counting and then filtering
+by a value returns the number the facet reported. A value is returned as text, in the form a filter
+would name it, and values come back commonest first.
+
+Faceting is a provider capability. A provider that cannot count is refused rather than answering
+with nothing, and the fields that can be counted are the provider's to decide:
+
+- The **Craft provider** counts by `elementType`, by `siteId`, and by any column the element type's
+  own table holds — `sectionId` and `typeId` for entries, `groupId` for categories, `volumeId`,
+  `folderId` and `kind` for assets, `typeId` for Commerce products. The columns are read from the
+  search Craft itself prepared, so an element type a plugin defines is counted by its own columns.
+  A name matching no column on any element type in the index is rejected. Custom fields cannot be
+  counted: Craft stores their values as JSON, which cannot be grouped.
+- The **Meilisearch provider** counts by `elementId`, `siteId`, `elementType` and any field the
+  index searches.
+
+Counting costs one extra request to the provider, made only when facets were asked for. A result a
+rule hides is left out of the counts, as it is left out of the results; one a rule pins or promotes
+is still counted, where the provider found it.
 
 ### Sorting
 
@@ -270,6 +398,31 @@ Query text and indexed content go through Craft's own keyword normalization: low
 of markup, punctuation, diacritics and emoji, with whitespace collapsed. Both sides are reduced the
 same way, so `Café` finds `cafe` and SearchKit never disagrees with what Craft indexed.
 
+Normalization is language-aware, because Craft's is: a character folds differently depending on the
+language, so content is reduced in the language of the site it belongs to and a query is read in the
+language of the site it is searching.
+
+**A search covering sites written in different languages is read in each of them.** No single
+language stands in for the others: every language the searched sites use reads the text for itself,
+and where two of them fold a word differently the term accepts both readings — `grüße` becomes
+`grusse OR gruesse` for a search covering an English and a German site, so neither site is searched
+for the other's spelling. Where the languages agree, which is most words, the term stays one term.
+
+Accepting two readings needs a provider that can be given alternatives. The Craft provider can;
+Meilisearch cannot, so a query whose readings differ is refused there rather than run as one of
+them. `result.parsedQuery.languages` says which languages a search was read in.
+
+**A query the languages do not read as the same words at all is refused**, whatever the provider.
+Craft reads the Cyrillic hard sign `ъ` as a word in English and as nothing in Russian, so
+`boots ъ` is two words to an English site and one to a Russian one — there is no pair of terms to
+accept, and running either reading would search the other site for something nobody typed. That is
+an invalid query, reported like any other: a 400 `invalid_query` over REST, a validation error over
+GraphQL, and an `InvalidQueryException` in PHP. Searching the sites of one language at a time
+answers each of them correctly.
+
+Words somebody configures — synonyms and extra stop words — are held in the language of the site
+they were written for.
+
 ### Operators
 
 With **Search operators** on — the default — these are read in what a visitor types:
@@ -311,7 +464,10 @@ what anyone means.
 ### Stop words
 
 Words too common to narrow anything down are dropped from a query. The built-in list is short and
-English; **Extra stop words** adds to it. A query made of nothing but stop words is left alone
+English, so it is only applied where **every** language the search covers is English — dropping
+`was` from a German query, or from a search covering an English and a German site, would be removing
+a word that narrows it. **Extra stop words** adds to it, in any language: a word somebody configured
+is dropped whatever the search is read in, and is recognised in each language's reading of it. A query made of nothing but stop words is left alone
 rather than emptied, so searching for `the who` still searches for something.
 
 ### Synonyms
@@ -325,11 +481,31 @@ them.
 | Two-way | Every term stands in for the others. `boots, footwear, shoes` — any of them finds all of them. |
 | One-way | The terms also search for the replacements, never the other way around. `tv → television`. |
 
-A term may be a word or a phrase, and is normalized on save exactly as indexed content is, so a
-synonym cannot fail to match over a capital letter or an accent. Synonyms are configuration rather
-than something a query asked for, so a provider that cannot offer alternatives simply goes without
-them instead of refusing the search. Groups are cached, and a save or delete is visible to the very
-next search.
+A term may be a word or a phrase, and is normalized on save exactly as indexed content is — in the
+language of the site the group was written for — so a synonym cannot fail to match over a capital
+letter or an accent. Synonyms are configuration rather than something a query asked for, so a
+provider that cannot offer alternatives simply goes without them instead of refusing the search.
+Groups are cached, and a save or delete is visible to the very next search.
+
+**A group only widens a search that stays inside the site it was written for.** A search covering
+several sites is one search, so an expansion is applied only where it holds in *every* site being
+searched:
+
+| Group's site | Search | Applied |
+|---|---|---|
+| Every site | any | yes |
+| Site A | site A | yes |
+| Site A | sites A and B | no — it would return results in B that a search of B alone never had |
+| Site A *and* an equivalent group on site B | sites A and B | yes — both sites say the same thing |
+
+Nothing is lost silently: what was held back is on `result.parsedQuery.withheldSynonyms` and on the
+debugger's page. Each site is asked with its own language's reading of the term, so a group written
+in either language is still found.
+
+Completions, corrections and no-result suggestions read the same words, and they read only the
+sites the search covers — a word only another site holds is never offered. Where the searched sites
+are written in different languages, each language reads what was typed for itself and is answered
+from its own sites, so a completion is always a word its own site actually holds.
 
 ### Typo tolerance
 
@@ -378,6 +554,34 @@ no search at all, so it is cheap enough to call while someone types, and its ans
 ```
 
 `craft.searchKit.suggest('siteSearch', q)` asks for the same alternatives without running a search.
+
+**Offering back what others searched for.** An index can also complete what is being typed with
+whole queries people have searched for before, which come ahead of the dictionary's own
+completions. This shows one visitor's wording to the next, so it is off until it is turned on under
+**Record searches → Suggest what others searched for**, and a past query is only ever offered when
+all of this holds:
+
+- the search found results, and somebody opened one of them — so the query is known to lead
+  somewhere real;
+- it was searched for at least five times, across at least two separate days, which raises the bar
+  on a one-off or a single burst of searching (both numbers are configurable per index). SearchKit
+  records nothing about who searched, so this is a threshold on **repeated searches over separate
+  days** — it is not evidence that different people made them;
+- and **every word of it is a word publicly searchable content still uses**, checked the same way
+  every other suggestion is.
+
+That last check is what makes the whole thing safe: a query naming something nobody may find — or
+that the content behind it no longer uses — is dropped rather than shown. The visibility check runs
+on every lookup, so content going unpublished stops being suggestible at once; which past queries
+are eligible is reused for up to five minutes, so a query that has just become popular can take
+that long to start being offered. Nothing about who searched is stored or read to do any of this.
+
+**Site and language scope.** Past queries are looked for among the searches of the sites being
+suggested for, in the language those sites read them in, and only ever narrowed by that scope. A
+search recorded for one site is offered in that site; a search that covered the index's whole scope
+is offered only when the whole scope is what is being suggested for, because it is not attributable
+to any one of those sites. This is the same rule a synonym group written for one site is held to: a
+query from one site is never offered in another just because its words happen to be visible there.
 
 ### The words an index holds
 
@@ -659,7 +863,7 @@ $criteria = new InsightsCriteria(['indexId' => $index->id, 'dateFrom' => new Dat
 $insights->getSummary($criteria);            // totals, rates and response time
 $insights->getPopularQueries($criteria);     // what people search for most
 $insights->getZeroResultQueries($criteria);  // what comes back with nothing
-$insights->getContentGaps($criteria);        // searched for repeatedly, nothing ever opened
+$insights->getUnopenedQueries($criteria);    // searched for repeatedly, nothing ever opened
 $insights->getSlowQueries($criteria);        // the ones past what the index calls slow
 $insights->getTrend($criteria);              // day by day, optionally for one query
 $insights->getClickedResults($criteria);     // the results people opened most
@@ -706,6 +910,335 @@ Each section says so plainly when there is nothing to show, and a reading that c
 leaves the rest of the page standing. The charts are drawn as plain SVG — no chart library, no
 JavaScript — and everything a chart says is also written out as a figure or a table beside it.
 
+## What to do next
+
+Everything above describes what happened. This reads a step further and says what is worth doing
+about it, always with the measurements behind it. It is reached from **SearchKit → What to do next**,
+needs the same permission as search activity, and reads the same index, site and date filters.
+Nothing on the page changes a search, and nothing here is ever applied on its own.
+
+### Search quality score
+
+One number out of 100, from three shares of the searches in the period:
+
+```
+success     = 1 − (searches that found nothing ÷ searches)
+engagement  = searches where a result was opened ÷ searches whose index follows opened results
+speed       = 1 − (searches past their own index's slow threshold ÷ searches)
+
+score = 100 × (0.5 × success + 0.3 × engagement + 0.2 × speed)
+```
+
+The weights are **a deliberate product judgement, not a validated model**: finding something at all
+is what a search is for, engagement is the only evidence that what was found was right, and speed
+matters but never as much as answering. No data was fitted and no study stands behind the numbers —
+they are stated here, and on the page, precisely so a score can be taken apart into the measurements
+it came from and argued with.
+
+A part nothing was recorded about is **left out**, and the remaining weights are shared out again —
+so an index that does not follow clicks scores on success and speed alone rather than being marked
+down for engagement nobody measured. With nothing searched for there is no score, not a score of
+zero.
+
+```php
+$intelligence = SearchKit::getInstance()->getIntelligence();
+$intelligence->getQualityScore($criteria);
+```
+
+**Across several indexes**, the reading settles two things itself rather than taking a caller's word
+for them:
+
+- *Engagement* is measured over only the searches whose index follows opened results. If every index
+  in the reading follows them it is the whole period; if none do it is unavailable; if they disagree
+  it is measured over the tracked subset, **with that subset as the denominator**, and the page says
+  how many searches it covers. An index that records nothing about clicks is never counted as an
+  index nobody opened anything from.
+- *Speed* judges each search by **its own index's** slow threshold, so two indexes that disagree
+  about what slow means are not both measured against one of the two numbers.
+
+### What has changed
+
+The last seven days against the seven before them, on the three things a change in would matter.
+Both windows end where the period asked for ends, so filtering to a date range compares the run-up
+to that date.
+
+| Reported when | Guard against noise |
+|---|---|
+| The share of searches finding nothing rose by 15 points **and** reached 25% | Both windows need at least 20 searches |
+| Search volume moved by half **and** by at least 20 searches | The baseline window needs at least 20 searches |
+| Average response time reached 1.5× the baseline **and** the strictest slow threshold among the indexes being read | Both windows need at least 20 searches |
+
+A window with fewer than 20 searches behind it is not compared at all: a rate over a handful of
+searches is not a measurement. The one exception is volume, which is still reported when the recent
+window is empty — search stopping altogether is exactly the thing worth knowing.
+
+```php
+$intelligence->detectAnomalies($criteria);        // the last 7 days against the 7 before
+$intelligence->detectAnomalies($criteria, 30);    // or any other window length
+```
+
+### Content gaps
+
+Demand the content does not answer: a query people search for repeatedly that comes back with
+nothing at least half the time, or comes back with results nobody ever opens. They are looked for
+among the most-searched queries, because that is where closing a gap is worth the work.
+
+```php
+$intelligence->getContentGaps($criteria);
+```
+
+### Synonym discovery
+
+Two queries people open the same results from mean the same thing to whoever searched. A pair is
+offered when both were searched for often enough, they share at least two opened results, and those
+make up at least half of the narrower query's opened results. A pair an existing synonym group
+already covers is not offered. **Nothing is ever applied**: a candidate is evidence for somebody to
+decide on, and it comes with the numbers it was read from.
+
+```php
+$intelligence->discoverSynonyms($criteria, $index);
+```
+
+The same element in two sites counts as two results, so two sites' versions of one page are not
+mistaken for two queries agreeing.
+
+**Pairs are built within one site scope.** An index covering several sites is searched in several
+languages, and two queries are only evidence about each other if the same search could have produced
+either. So the site each search was recorded for is carried through, and two queries are only weighed
+against each other when they were searched under the same scope — a query from an English site is
+never paired with one from a German site. Each candidate reports the scope it was observed in, which
+is the scope a group written from it belongs to, and whether an existing group already covers it is
+asked about that same scope.
+
+### Recommendations
+
+The readings above, turned into things to do, most-searched first. Each one carries its reason in
+words, the measurements behind it, and a page to act on where there is one:
+
+| Recommendation | Read from |
+|---|---|
+| Improve the content | A popular query that finds nothing at least half the time |
+| Create a rule | A popular query whose results are there and nobody opens them |
+| Create a synonym | Two queries people open the same results from |
+| Promote a result | A result opened at least three times, sitting at position five or deeper on average |
+
+```php
+SearchKit::getInstance()->getRecommendations()->forCriteria($criteria, $index);
+```
+
+### How the wording reads
+
+Queries are also grouped by what their wording is after — product, informational, support or
+transactional. This is a dictionary of cue words plus one structural signal, and nothing more:
+`how` and `guide` read as informational, `buy` and `delivery` as transactional, `warranty` and
+`returns` as support, and a token carrying both letters and digits reads as a part number. Every
+reading reports the words that decided it.
+
+```php
+$intent = SearchKit::getInstance()->getIntent()->classify('how do I clean a kettle', 'en-GB');
+$intent->intent;               // SearchIntent::Informational
+$intent->getMatchedCues();     // ['how']
+$intent->getExplanation();     // Read as Informational from “how”.
+```
+
+A query pointing equally at two readings is reported as pointing at neither, rather than being
+resolved by some order of precedence. A query saying nothing recognisable is left unread. The cue
+words are English, so a query in another language is read from its structure alone. This describes
+the wording people use and nothing else: **it never affects a search**, and it is not a claim about
+anybody's purpose.
+
+```php
+$intelligence->getIntentBreakdown($criteria);   // intent => searches whose wording read that way
+```
+
+The breakdown covers the most-searched queries of the period, not every query recorded in it, and
+reads them in the language of the site being counted — the application's language when no site is
+being filtered to.
+
+## Debugger
+
+The **Debugger** page runs a real search and shows what it did. Nothing on it is reconstructed
+afterwards: the search itself records each step as it happens, so the page explains the search that
+ran rather than a description of one. A debugged search is not counted as search activity.
+
+Choose an index, type a query, optionally narrow it to a site or a status, and run it. The page
+then shows:
+
+| Section | What it explains |
+|---|---|
+| Query | What was typed, what it normalized to, and — separately — what the provider was actually searched with once stop words, operators, synonyms and any correction had been settled. A correction never overwrites what was typed. Also the parsed terms the provider was given: phrase, exclusion, whole-word, partial matching and the synonyms each term also accepts |
+| Provider | Which provider served the index, what it declared it can do, the sites and element types searched, the configured field weights, every call made to the provider with its window and timing, and the diagnostics that provider declares safe to show |
+| Time | Milliseconds spent resolving the index, reading the query, planning and applying rules, searching, loading and authorizing results, working out matched fields, and finding suggestions |
+| Rules | Every rule considered, whether it matched and why not, and what each of its actions did — including an action a higher-priority rule had already settled |
+| Results | Each result in rank order, with what put it there: a score — the provider's own plus what the rules moved it by — or a pin at a stated position, or a promotion. A placed result shows no score, because the search never gave it one. Also what it matched on and the weight the index gives those fields |
+| SearchKit exclusions | What SearchKit itself kept out: the targets a rule removed before the search ran, named with their status, and the results that were found but could not be shown in the site and status the search ran in |
+
+**What it will not claim.** The scoring model shown is the real one: a result is ranked by the
+provider's own score plus whatever the rules moved it by. The Craft provider scores results itself
+and applies no field weighting, and the page says so rather than presenting configured weights as
+though they decided the ranking. A result a rule pinned or promoted is shown as placed, never as
+though a score put it there. A rule's hidden target is listed as something SearchKit kept out, not
+as a result the query matched: it was never searched for, so whether it would have matched is not
+known, and the debugger does not re-run the search without the rule to find out.
+
+**Provider diagnostics are opt-in.** A provider is asked which parts of what it reported may be
+shown, and nothing else reaches the page. The Craft provider names the query it ran, the element
+types and the ordering. A provider that reports a request carrying credentials shows nothing at all
+until it declares otherwise.
+
+Running the debugger needs the *Run searches in the debugger* permission, and a search of anything
+other than published content still needs an administrator, exactly as it does anywhere else. The
+page shows no provider settings: credentials belong in environment variables and never reach it.
+
+## HTTP and GraphQL
+
+Search is reachable over HTTP and through Craft's GraphQL API. Both run the same search service
+PHP and Twig run: the query pipeline, the rules, the site scope and the visibility rules are the
+same whichever way the search arrives.
+
+**Both search published content only.** There is no signed-in user behind an API key or a GraphQL
+token, and only published content is searchable anonymously. Asking for anything else is refused.
+
+### API keys
+
+The HTTP API is authenticated with a key, managed under **SearchKit → API keys** with the *Create
+and revoke search API keys* permission.
+
+- A key is **shown once**, as soon as it is created. It is stored only as an irreversible SHA-256
+  digest, so it can never be shown, recovered or logged again — a lost key is replaced, not found.
+- A key is **scoped to indexes**. It may search the indexes it names, or every index if it names
+  none. An index it may not search is reported as though it were not there, so a key cannot be used
+  to find out which indexes exist.
+- A key carries a **rate limit** in requests a minute, 60 by default and optional.
+- A key is **revoked** by deleting it, or suspended by disabling it. A disabled key is refused
+  exactly as an unknown one is.
+
+### REST
+
+```
+GET  /search-kit/api/search?index=siteSearch&q=winter+boots&limit=10
+POST /search-kit/api/search
+```
+
+The key travels in the `Authorization` header and nowhere else — a key in a query string would be
+kept by every log and proxy it passed through.
+
+```bash
+curl -H "Authorization: Bearer sk_…" \
+  "https://example.com/search-kit/api/search?index=siteSearch&q=winter%20boots&limit=10"
+
+curl -X POST -H "Authorization: Bearer sk_…" -H "Content-Type: application/json" \
+  -d '{"index":"siteSearch","q":"winter boots","limit":10,"highlight":true}' \
+  "https://example.com/search-kit/api/search"
+```
+
+`index` and `q` are the endpoint's own parameters. Everything else is a search parameter and means
+exactly what it means in PHP and Twig — `limit`, `offset`, `page`, `site`, `sites`, `facets`,
+`filters`, `orderBy`, `highlight` and `snippetLength` — so anything the search API rejects is rejected here, in the same
+words. `status` is refused outright, since the API searches published content only. Booleans may be
+given as `true`/`false` or `1`/`0`, since that is how a query string carries one.
+
+Filters take the same shapes a template uses, as query parameters or as JSON, and `sites` and
+`facets` may be given as a comma-separated list:
+
+```
+?filters[section][]=news&filters[postDate][gte]=2024-01-01&facets=sectionId,elementType
+```
+
+A successful search answers with the result as plain data:
+
+```json
+{
+  "index": "siteSearch",
+  "query": "winter boots",
+  "correctedQuery": null,
+  "suggestions": [],
+  "redirect": null,
+  "total": 42,
+  "limit": 10, "offset": 0, "page": 1, "pageCount": 5,
+  "hasNextPage": true, "hasPreviousPage": false,
+  "executionTime": 12.41,
+  "trackingToken": "3f2a…",
+  "facets": [
+    { "field": "sectionId", "values": [{ "value": "3", "count": 28 }, { "value": "7", "count": 14 }] }
+  ],
+  "hits": [
+    {
+      "elementId": 431, "siteId": 1, "elementType": "entry",
+      "title": "Winter Boots", "url": "https://example.com/winter-boots",
+      "score": 253, "scoreAdjustment": 0, "finalScore": 253,
+      "pinned": false, "promoted": false,
+      "matchedFields": ["title"], "snippets": {}, "highlights": {}
+    }
+  ]
+}
+```
+
+A hit reports what matched and how it ranked, plus the element's title and URL. Field values are
+not part of it: a search API is not a content API.
+
+Every failure has the same shape, with the status that goes with it:
+
+```json
+{ "error": { "code": "invalid_query", "message": "…", "details": { "limit": ["…"] } } }
+```
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `invalid_query` | A parameter is missing, unknown, the wrong type, or out of range |
+| 400 | `unsupported_query` | The index's provider cannot do what the query asked for |
+| 401 | `unauthorized` | No key, or one that is unknown or disabled |
+| 404 | `index_not_found` | No such index — or none this key may search |
+| 404 | `index_disabled` | The index exists but is disabled |
+| 403 | `forbidden` | The search asked for content nobody anonymous may see |
+| 405 | — | Anything other than `GET` or `POST` |
+| 429 | `rate_limit_exceeded` | The key has spent its rate, with `Retry-After` in seconds |
+| 502 | `provider_error` | The index's provider failed |
+| 500 | `search_failed` | Anything else, logged rather than described |
+
+A rate-limited key gets `X-Rate-Limit-Limit` and `X-Rate-Limit-Remaining` on every answer. The
+allowance leaks back at the limit's own rate rather than resetting on a clock, so a key cannot
+spend two windows' worth of requests either side of a boundary.
+
+### GraphQL
+
+SearchKit adds one query to Craft's GraphQL API, `searchKitSearch`. It is only offered to a schema
+that names at least one SearchKit index, and each index is a schema component of its own — grant
+them under **GraphQL → Schemas**, the same way sections and asset volumes are granted.
+
+```graphql
+{
+  searchKitSearch(index: "siteSearch", q: "winter boots", site: "default", limit: 10) {
+    total
+    page
+    hasNextPage
+    hits {
+      elementId
+      siteId
+      elementType
+      finalScore
+      snippet
+    }
+  }
+}
+```
+
+The arguments are the search parameters: `index`, `q`, `site`, `sites`, `facets`, `limit`, `offset`,
+`page`, `orderBy`, `filters`, `highlight` and `snippetLength`. Counts come back under `facets`, as
+`{ field, values { value count } }`. A filter is `{ field, operator, value }`, where `value`
+is always a list — `in` and `notIn` take several, and every other operator takes exactly one.
+
+**What a schema decides.** An index the schema does not name is reported as though it were not
+there. A site the schema does not allow cannot be searched — every site a search names has to
+be allowed — and a search covering every site is refused unless the schema allows every site — naming one is what narrows it, rather than SearchKit
+quietly answering for part of the scope.
+
+**A hit names an element; it does not hand out its content.** `elementId` and `siteId` are what a
+result is, and the content behind it is fetched through Craft's own `entries`, `categories` or
+`assets` queries, where the schema decides which fields may be read. Snippets and highlights are
+excerpts of the index's own searchable values, so granting an index is granting excerpts of what
+that index searches.
+
 ## Indexing
 
 SearchKit keeps an index in step with Craft content by listening to Craft's own element events.
@@ -722,7 +1255,8 @@ document builder → search provider
 ```
 
 An index only receives element types it is configured for, in sites it covers. Entries, categories,
-assets and users can be indexed.
+assets and users can be indexed, along with Commerce products and variants where Craft Commerce is
+installed.
 
 ### Documents
 
@@ -827,15 +1361,22 @@ the results, their schedule and their priority.
 
 **SearchKit → Synonyms** lists and edits synonym groups.
 
+**SearchKit → API keys** lists, creates and revokes the keys the HTTP API is reached with. A key is
+shown once, when it is created.
+
 **SearchKit → Search activity** lists recorded searches, filtered by index, site and date range,
 with the totals for whatever is being shown. A date range covers the whole of both days it names.
 Deleting from that page forgets every search recorded for the selected index, or for every index —
 it is not limited by the dates or the site being shown, and says so.
 
-Six permissions govern all of it: viewing, managing indexes, rebuilding or retrying, managing
-rules, viewing search activity and deleting it. Synonyms and search behaviour are managed under the
-same permission as the indexes they belong to; rules and search activity have their own, so
-merchandising and measurement can each be delegated without handing over index configuration.
+**SearchKit → What to do next** reads the same recorded activity a step further: the quality score,
+what has changed against the window before, and what to do about each gap, pair and buried result.
+
+Permissions govern all of it: viewing, managing indexes, rebuilding or retrying, managing rules,
+running the debugger, managing API keys, viewing search activity and deleting it. Synonyms and
+search behaviour are managed under the same permission as the indexes they belong to; rules, API
+keys and search activity have their own, so merchandising, integration and measurement can each be
+delegated without handing over index configuration.
 
 ### Commands
 
@@ -846,21 +1387,165 @@ php craft search-kit/index/rebuild <handle>  # queue a rebuild, or --now to run 
 php craft search-kit/index/retry <handle>    # put failed operations back in the queue
 ```
 
+## Craft Commerce
+
+Commerce is optional. SearchKit does not require it and does not depend on it: the only Commerce
+class names in the codebase are two strings inside one service, so nothing can autoload Commerce
+that is not installed, and without the Commerce plugin that service registers nothing at all — no
+element types, no filters, no listeners.
+
+Where Commerce is installed, products and variants join entries, categories, assets and users as
+indexable element types, and are then configured, indexed, searched, merchandised, recorded and
+explained by the machinery everything else uses: the same `SearchQuery`, query pipeline, provider
+abstraction, `SearchResult`, rules, activity, debugger, REST and GraphQL. There is no Commerce
+search path, no Commerce rules engine and no Commerce endpoints.
+
+Verified against **Craft Commerce 5.7.4** on Craft 5.10.13.2 — Commerce 5 is the only line that runs
+on Craft 5. What SearchKit offers is settled against the query the installed Commerce actually
+defines, so a version that drops or renames something simply stops offering it.
+
+### What gets indexed
+
+Products and variants are configured on the index page like any other element type, and what they
+can be indexed on comes from Commerce itself:
+
+- Products: `defaultSku` and `sku` — Commerce's own searchable attributes, both filled from the
+  default variant — plus `title`, `slug` and any custom field on the product field layout.
+- Variants: `sku`, `price`, `description`, `productTitle`, `width`, `height`, `length`, `weight`,
+  `minQty`, `maxQty`, plus `title`, `slug` and any custom field on the variant field layout.
+
+Values are extracted by Craft and Commerce themselves, so nothing here knows how a price or a SKU is
+stored. Commerce-native values that Commerce does not declare searchable — a variant's stock, for
+instance — are filter criteria rather than indexed content.
+
+### Variant changes
+
+A product's searchable attributes — `defaultSku` and `sku` — are the values Commerce fills from its
+**default** variant, so that variant being saved, deleted or restored can leave the product's
+document stale. SearchKit follows exactly that, and nothing wider:
+
+- A variant that is not the default is not followed. Nothing of it reaches the product's document,
+  so the product cannot have gone stale, and the product is never even loaded.
+- A product whose index searches it only by title and its own custom fields is not followed either:
+  a custom field on the product's own layout cannot carry variant data.
+
+So a variant change loads a product only when that variant is the default *and* some index searches
+one of the attributes it fills. A variant ceasing to be the default is not followed on its own
+account — the variant replacing it is saved too, and carries the flag.
+
+A failure here can never fail a Commerce save or delete. What it hands to indexing is an ordinary
+element change, so indexing keeps its own queue, retry and failure behaviour.
+
+### Filtering
+
+Commerce contributes its own query criteria to the Craft provider, on top of the criteria every
+element type already accepts. A criterion the installed Commerce does not define is never offered,
+and is then refused with the usual explanation rather than silently ignored.
+
+- Products: `defaultSku`, `defaultPrice`, `defaultWidth`, `defaultHeight`, `defaultLength` and
+  `defaultWeight`. A product's type is `type` or `typeId`, and a category is `relatedTo`.
+- Variants: `sku`, `price`, `stock`, `hasStock`, `hasUnlimitedStock`, `inventoryTracked`,
+  `availableForPurchase`, `isDefault`, `productId`, `minQty`, `maxQty`, `width`, `height`, `length`
+  and `weight`. A variant is filtered by its product's type with `typeId`.
+
+```twig
+{% set results = craft.searchKit.search('products', q, {
+    filters: {
+        elementType: 'product',
+        type: 'clothing',
+        defaultPrice: { lte: 50 },
+        relatedTo: category.id,
+    },
+}) %}
+```
+
+Prices are Commerce's own stored prices: `defaultPrice` is the product's default variant's price and
+`price` is a variant's, both resolved by Commerce from its base price. Filtering is done by
+Commerce's element query, never by loading products and comparing in PHP.
+
+Stock, availability and inventory tracking are four different questions and are kept apart.
+`hasStock` asks whether anything is available — a variant Commerce does not track has unlimited
+stock and always answers yes; `stock` asks how much; `hasUnlimitedStock` and `inventoryTracked` ask
+whether Commerce counts it at all; and `availableForPurchase` is a separate flag again. An element's
+`status` is none of these and stays what it is everywhere else in SearchKit.
+
+**Deliberately not exposed:** promotional and sale pricing (`promotionalPrice`, `salePrice`,
+`onPromotion`, `hasSales`), because what a shopper pays depends on catalog pricing rules and on who
+is asking, and an anonymous search has no deterministic answer; `forCustomer`, for the same reason;
+`hasVariant`, because it takes a query rather than a value and SearchKit's filters carry strings,
+numbers, booleans and dates only; and shipping and tax categories, which are internal configuration
+rather than something a shopper searches by. Each of these is refused rather than ignored. Customer,
+order, payment and address data is never indexed, never filterable and never returned.
+
+### Sites, rules, activity and the APIs
+
+Commerce changes none of it. A product or variant is resolved in the site SearchKit asked for, an
+index's site scope is never widened, and there is no Commerce-specific site fallback. Products and
+variants are merchandised with the rules that already exist — boost, bury, hide, pin, promote and
+redirect, on the same priorities, schedules and site scoping — and a rule's element type is checked
+against what its index searches. Searches of Commerce content raise the same search event, are
+recorded by the same activity, explained by the same debugger, and reachable over the same REST and
+GraphQL paths under the same keys, schemas, index scopes and site restrictions.
+
 ## Limitations
 
 What SearchKit does not do yet, and the limits of what it does.
 
-- Only entries, categories, assets and users are offered as indexable element types.
-- Only the Craft provider ships, with the constraints described above — including that it shares
-  Craft's single search index rather than giving each SearchKit index its own store.
+- Only entries, categories, assets and users are offered as indexable element types, plus Commerce
+  products and variants where Craft Commerce is installed.
+- Commerce promotional and sale pricing cannot be filtered on, and products cannot be filtered by
+  variant criteria in one query (`hasVariant`). Filter variants directly instead.
+- Whether a variant change reaches its product is decided across every enabled index at once. If any
+  index searches a product's variant-derived attributes, a variant change reindexes its product in
+  every index that covers it, not only in the index that needed it.
+- Commerce support is verified against Commerce 5.7.4 only. Other 5.x releases are expected to work,
+  since what is offered is resolved against the installed query, but they have not been run.
+- Commerce filtering is the Craft provider's. On a Meilisearch-backed index a field's value is
+  indexed as text, so a price range — or any other comparison on a field — is refused there.
+- `relatedTo` is the Craft provider's too. Meilisearch holds no relationships, so a search of a
+  Meilisearch-backed index cannot be narrowed by one.
+- Two providers ship — Craft and Meilisearch — each with the constraints described above. Algolia,
+  Typesense and OpenSearch are not implemented.
+- Provider settings are per index. Two indexes on one Meilisearch server each carry their own copy
+  of its address and key.
 - A rebuild is never started automatically after a configuration change; it is reported as owed.
 - Suggestions describe published content only, for everybody. There is no way to complete or
   correct against unpublished content, even as an administrator.
-- The built-in stop word list is English. Any other language needs its own words configured.
+- The built-in stop word list is English, and is only applied to a search read in English. Any other
+  language needs its own words configured under **Extra stop words**.
+- Language-aware analysis is Craft's character folding, plus whatever the provider does with the
+  languages it is told about. There is no stemming, lemmatization or per-language analyzer of
+  SearchKit's own.
 - `-` and `OR` cannot be combined in one term; the query is refused rather than reinterpreted.
-- Suggestions are ranked by how little they change what was typed. Recorded search activity is not
-  used to rank them, so nothing knows what is popular.
-- No faceting or field-scoped search.
+- The dictionary's own suggestions are ranked by how little they change what was typed; recorded
+  activity does not reorder them. Past searches can be offered alongside them, but only as whole
+  queries and only when the index is told to.
+- A past search is offered back to anybody who can reach the search box. The checks behind it are
+  what make that safe; there is no per-person filtering, because nothing about who searched is
+  recorded.
+- Past searches are offered from what the index has recorded, whatever site each search covered. It
+  is the visibility check on every word that decides what may be shown in a given site, not the
+  site the search was recorded against.
+- No field-scoped search.
+- A facet counts by a column, not by a custom field: Craft stores custom field values as JSON, which
+  cannot be grouped, so only element attributes can be counted on a Craft-backed index. Meilisearch
+  counts by its own attributes, so a searchable field can be counted there.
+- A facet returns at most 100 values per element type, commonest first, and counting costs one extra
+  request to the provider.
+- Results cannot be ordered by how often they are opened — there is no popularity sort. Recorded
+  search activity is read back as insights; it does not feed ranking.
+- A search naming several sites reads every rule its index has and settles each action against the
+  sites it named. Analytics records a site only for a search of one site, and a language only when
+  every site being searched is written in the same one — a search spanning two languages records
+  neither, rather than claiming one of them.
+- Language-aware reading is per site, not per index: an index cannot be told to read everything in
+  one language. What a site is written in is Craft's answer.
+- A search covering sites in different languages needs a provider that accepts alternatives for any
+  word those languages fold differently. The Craft provider does; Meilisearch does not, so such a
+  query is refused there rather than run as one language's reading.
+- A synonym group written for one site is not applied to a search covering other sites, since it
+  would return results there that a search of those sites alone never had. What was held back is
+  reported on the result and in the debugger.
 - A rule's boost or bury amount is shared by every result it moves; different amounts for different
   results need one rule each. A rule's results are chosen only after it has been saved with an index
   and, on an index covering every site, a site — both decide what there is to choose from.
@@ -884,7 +1569,57 @@ What SearchKit does not do yet, and the limits of what it does.
 - Dashboard tables show the top few rows of each metric. Longer listings are readable from PHP.
 - The dashboard has a fixed set of panels: they can be arranged, resized and put away, but not
   configured, duplicated or added to.
-- No debugger.
+- The quality score, anomalies, gaps, synonym candidates and recommendations are read from
+  recorded activity alone. Nothing is learned, nothing is predicted, and nothing is applied
+  automatically.
+- Anomaly detection compares two windows of equal length and nothing more. There is no seasonality,
+  no trend fitting, and no allowance for a period that is quiet every year.
+- A window with fewer than 20 searches is not compared at all, so a quiet index reports no
+  anomalies rather than reporting noise.
+- Synonym candidates need clicks. An index that does not follow opened results discovers nothing,
+  and neither does a period nobody clicked in.
+- A synonym candidate is only ever built from searches made under one site scope. Two queries that
+  mean the same thing but were only ever searched in different sites are not paired, and a pair
+  observed across an index's whole scope does not name a site to write the group for.
+- Site scope is what carries language through both of these. A search covering an index's whole
+  scope may span several languages, so a candidate or an offered query from one is not attributable
+  to any single language either — which is why neither is narrowed to a site inside that scope.
+- Past searches are only offered within the site scope they were searched under. A search covering
+  an index's whole scope is not offered when suggesting for one site inside it, so a narrowed search
+  box on an all-sites index offers only what was searched in that site.
+- The minimum searches and minimum days behind an offered query are thresholds on repetition. They
+  are not a count of people: SearchKit records nothing that could distinguish one searcher from
+  another, and deliberately keeps it that way.
+- Content gaps are looked for among the most-searched queries the period returns, not across every
+  query recorded in it.
+- The search-activity page and the dashboard count slow searches against one threshold when they
+  cover several indexes, which is the index filter's own setting or the default. Only the
+  intelligence readings judge each search by its own index's threshold, so the two pages can report
+  different slow counts for an unfiltered period.
+- The intent breakdown covers the most-searched queries of the period, not every query in it.
+- The 0.5 / 0.3 / 0.2 quality weights are a product judgement, not a validated model. Nothing was
+  fitted to data and they cannot be configured.
+- Intent is a dictionary of English cue words plus a part-number signal. It is not measured against
+  labelled data, no accuracy is claimed for it, it cannot be configured or extended, and it never
+  affects a search. A query in another language is read from its structure alone.
+- A recommendation links to the page for writing a rule or a synonym; it does not prefill one.
+- The debugger explains one search at a time. It cannot compare two searches, and it cannot answer
+  why a particular piece of content was not matched: it explains the results a search returned and
+  the ones SearchKit itself took out of it, not everything it did not find.
+- The HTTP and GraphQL APIs search published content only. There is no way to search unpublished
+  content through either of them, whatever the key or the schema.
+- Only search is exposed. Autocomplete, suggestions for a failed search and click reporting are
+  available from PHP and Twig, but not over HTTP or GraphQL.
+- An API key is scoped to indexes and nothing finer. It cannot be limited to sites, element types
+  or filters, and it cannot be regenerated — it is revoked and replaced.
+- Rate limiting is per key, per minute, and is held in Craft's cache. Clearing the cache gives every
+  key its full allowance back, and two web servers with separate caches each count separately.
+- A GraphQL hit names its element and how it ranked. Content is fetched through Craft's own element
+  queries, so a result cannot be read and its fields returned in one request.
+- A GraphQL search covering every site is refused unless the schema allows every site.
+- What a result matched on is worked out from the index's own values, the same way an excerpt is.
+  The Craft provider does not report which fields it matched, so a field whose value no longer
+  contains the term — because it changed since it was indexed — is not listed.
 
 ## Local development
 

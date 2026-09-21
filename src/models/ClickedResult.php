@@ -19,6 +19,9 @@ class ClickedResult extends Model
 
     public int $clicks = 0;
 
+    /** @var string|null The query these clicks came from, where the reading is one query at a time. */
+    public ?string $query = null;
+
     /** @var float Mean place in the results this was opened from, counted from one. */
     public float $averagePosition = 0.0;
 

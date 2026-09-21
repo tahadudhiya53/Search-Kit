@@ -5,25 +5,40 @@ namespace Tahadudhiya\SearchKit;
 use Craft;
 use craft\base\Plugin;
 use craft\events\ElementEvent;
+use craft\events\RegisterGqlQueriesEvent;
+use craft\events\RegisterGqlSchemaComponentsEvent;
+use craft\events\RegisterGqlTypesEvent;
 use craft\events\RegisterUrlRulesEvent;
 use craft\events\RegisterUserPermissionsEvent;
 use craft\services\Elements;
 use craft\services\Gc;
+use craft\services\Gql;
 use craft\services\UserPermissions;
 use craft\web\twig\variables\CraftVariable;
 use craft\web\UrlManager;
 use Tahadudhiya\SearchKit\events\SearchEvent;
+use Tahadudhiya\SearchKit\gql\queries\SearchQueries;
+use Tahadudhiya\SearchKit\gql\resolvers\SearchResolver;
+use Tahadudhiya\SearchKit\gql\types\SearchHitType;
+use Tahadudhiya\SearchKit\gql\types\SearchResultType;
 use Tahadudhiya\SearchKit\services\Analytics;
+use Tahadudhiya\SearchKit\services\Api;
+use Tahadudhiya\SearchKit\services\ApiKeys;
+use Tahadudhiya\SearchKit\services\Commerce;
 use Tahadudhiya\SearchKit\services\DashboardLayouts;
+use Tahadudhiya\SearchKit\services\Debugger;
 use Tahadudhiya\SearchKit\services\Documents;
 use Tahadudhiya\SearchKit\services\Highlighting;
 use Tahadudhiya\SearchKit\services\Indexes;
 use Tahadudhiya\SearchKit\services\Indexing;
 use Tahadudhiya\SearchKit\services\IndexOperations;
 use Tahadudhiya\SearchKit\services\Insights;
+use Tahadudhiya\SearchKit\services\Intelligence;
+use Tahadudhiya\SearchKit\services\Intent;
 use Tahadudhiya\SearchKit\services\Normalization;
 use Tahadudhiya\SearchKit\services\Providers;
 use Tahadudhiya\SearchKit\services\QueryPipeline;
+use Tahadudhiya\SearchKit\services\Recommendations;
 use Tahadudhiya\SearchKit\services\RuleEngine;
 use Tahadudhiya\SearchKit\services\Rules;
 use Tahadudhiya\SearchKit\services\Search;
@@ -39,16 +54,23 @@ use yii\base\Event;
  * SearchKit — search management and intelligence for Craft CMS.
  *
  * @property-read Analytics $analytics
+ * @property-read Api $api
+ * @property-read ApiKeys $apiKeys
+ * @property-read Commerce $commerce
  * @property-read DashboardLayouts $dashboardLayouts
+ * @property-read Debugger $debugger
  * @property-read Documents $documents
  * @property-read Highlighting $highlighting
  * @property-read IndexOperations $indexOperations
  * @property-read Indexes $indexes
  * @property-read Indexing $indexing
  * @property-read Insights $insights
+ * @property-read Intelligence $intelligence
+ * @property-read Intent $intent
  * @property-read Normalization $normalization
  * @property-read Providers $providers
  * @property-read QueryPipeline $queryPipeline
+ * @property-read Recommendations $recommendations
  * @property-read RuleEngine $ruleEngine
  * @property-read Rules $rules
  * @property-read Search $search
@@ -67,10 +89,12 @@ class SearchKit extends Plugin
     public const PERMISSION_MANAGE = 'searchKit:manageIndexes';
     public const PERMISSION_REBUILD = 'searchKit:rebuildIndexes';
     public const PERMISSION_MANAGE_RULES = 'searchKit:manageRules';
+    public const PERMISSION_DEBUG = 'searchKit:debugSearch';
     public const PERMISSION_VIEW_INSIGHTS = 'searchKit:viewInsights';
     public const PERMISSION_MANAGE_INSIGHTS = 'searchKit:manageInsights';
+    public const PERMISSION_MANAGE_API_KEYS = 'searchKit:manageApiKeys';
 
-    public string $schemaVersion = '1.11.0';
+    public string $schemaVersion = '1.13.0';
     public bool $hasCpSection = true;
     public bool $hasCpSettings = false;
 
@@ -79,16 +103,23 @@ class SearchKit extends Plugin
         return [
             'components' => [
                 'analytics' => ['class' => Analytics::class],
+                'api' => ['class' => Api::class],
+                'apiKeys' => ['class' => ApiKeys::class],
+                'commerce' => ['class' => Commerce::class],
                 'dashboardLayouts' => ['class' => DashboardLayouts::class],
+                'debugger' => ['class' => Debugger::class],
                 'documents' => ['class' => Documents::class],
                 'highlighting' => ['class' => Highlighting::class],
                 'indexOperations' => ['class' => IndexOperations::class],
                 'indexes' => ['class' => Indexes::class],
                 'indexing' => ['class' => Indexing::class],
                 'insights' => ['class' => Insights::class],
+                'intelligence' => ['class' => Intelligence::class],
+                'intent' => ['class' => Intent::class],
                 'normalization' => ['class' => Normalization::class],
                 'providers' => ['class' => Providers::class],
                 'queryPipeline' => ['class' => QueryPipeline::class],
+                'recommendations' => ['class' => Recommendations::class],
                 'ruleEngine' => ['class' => RuleEngine::class],
                 'rules' => ['class' => Rules::class],
                 'search' => ['class' => Search::class],
@@ -108,11 +139,16 @@ class SearchKit extends Plugin
         $this->registerContentSync();
         $this->registerSearchAnalytics();
         $this->registerTwigVariable();
+        $this->registerSiteRoutes();
+        $this->registerGraphql();
 
         // Permissions and CP routes need services Craft has not finished building yet.
         Craft::$app->onInit(function() {
             $this->registerCpRoutes();
             $this->registerPermissions();
+
+            // Commerce has to be resolvable before it can be asked whether it is there.
+            $this->getCommerce()->register();
         });
     }
 
@@ -135,10 +171,29 @@ class SearchKit extends Plugin
             'synonyms' => ['label' => Craft::t('search-kit', 'Synonyms'), 'url' => 'search-kit/synonyms'],
         ];
 
+        if ($this->userCan(self::PERMISSION_DEBUG)) {
+            $item['subnav']['debug'] = [
+                'label' => Craft::t('search-kit', 'Debugger'),
+                'url' => 'search-kit/debug',
+            ];
+        }
+
+        if ($this->userCan(self::PERMISSION_MANAGE_API_KEYS)) {
+            $item['subnav']['api-keys'] = [
+                'label' => Craft::t('search-kit', 'API keys'),
+                'url' => 'search-kit/api-keys',
+            ];
+        }
+
         if ($this->canViewInsights()) {
             $item['subnav']['analytics'] = [
                 'label' => Craft::t('search-kit', 'Search activity'),
                 'url' => 'search-kit/analytics',
+            ];
+
+            $item['subnav']['intelligence'] = [
+                'label' => Craft::t('search-kit', 'What to do next'),
+                'url' => 'search-kit/intelligence',
             ];
         }
 
@@ -206,10 +261,56 @@ class SearchKit extends Plugin
             $event->rules['search-kit/rules/new'] = 'search-kit/rules/edit';
             $event->rules['search-kit/rules/<ruleId:\d+>'] = 'search-kit/rules/edit';
             $event->rules['search-kit/dashboard'] = 'search-kit/dashboard/index';
+            $event->rules['search-kit/debug'] = 'search-kit/debug/index';
             $event->rules['search-kit/analytics'] = 'search-kit/analytics/index';
+            $event->rules['search-kit/intelligence'] = 'search-kit/intelligence/index';
             $event->rules['search-kit/synonyms'] = 'search-kit/synonyms/index';
             $event->rules['search-kit/synonyms/new'] = 'search-kit/synonyms/edit';
             $event->rules['search-kit/synonyms/<synonymId:\d+>'] = 'search-kit/synonyms/edit';
+            $event->rules['search-kit/api-keys'] = 'search-kit/api-keys/index';
+            $event->rules['search-kit/api-keys/new'] = 'search-kit/api-keys/edit';
+            $event->rules['search-kit/api-keys/<keyId:\d+>'] = 'search-kit/api-keys/edit';
+        });
+    }
+
+    /**
+     * The search API's own route, so it is reached at a fixed address rather than through Craft's
+     * action trigger.
+     */
+    private function registerSiteRoutes(): void
+    {
+        Event::on(UrlManager::class, UrlManager::EVENT_REGISTER_SITE_URL_RULES, function(RegisterUrlRulesEvent $event) {
+            $event->rules['search-kit/api/search'] = 'search-kit/api/search';
+        });
+    }
+
+    /**
+     * GraphQL is another way into the same search service, so it adds a query and the schema
+     * components that decide which indexes a token may search.
+     */
+    private function registerGraphql(): void
+    {
+        Event::on(Gql::class, Gql::EVENT_REGISTER_GQL_TYPES, function(RegisterGqlTypesEvent $event) {
+            $event->types[] = SearchHitType::class;
+            $event->types[] = SearchResultType::class;
+        });
+
+        Event::on(Gql::class, Gql::EVENT_REGISTER_GQL_QUERIES, function(RegisterGqlQueriesEvent $event) {
+            $event->queries = array_merge($event->queries, SearchQueries::getQueries());
+        });
+
+        Event::on(Gql::class, Gql::EVENT_REGISTER_GQL_SCHEMA_COMPONENTS, function(RegisterGqlSchemaComponentsEvent $event) {
+            $components = [];
+
+            foreach ($this->getIndexes()->getAllIndexes() as $index) {
+                $components[SearchResolver::schemaComponent($index) . ':read'] = [
+                    'label' => Craft::t('search-kit', 'Search the “{name}” index', ['name' => $index->name]),
+                ];
+            }
+
+            if ($components !== []) {
+                $event->queries[Craft::t('search-kit', 'SearchKit')] = $components;
+            }
         });
     }
 
@@ -230,6 +331,12 @@ class SearchKit extends Plugin
                             ],
                             self::PERMISSION_MANAGE_RULES => [
                                 'label' => Craft::t('search-kit', 'Create, edit and delete search rules'),
+                            ],
+                            self::PERMISSION_DEBUG => [
+                                'label' => Craft::t('search-kit', 'Run searches in the debugger'),
+                            ],
+                            self::PERMISSION_MANAGE_API_KEYS => [
+                                'label' => Craft::t('search-kit', 'Create and revoke search API keys'),
                             ],
                             self::PERMISSION_VIEW_INSIGHTS => [
                                 'label' => Craft::t('search-kit', 'View search activity'),
@@ -268,9 +375,29 @@ class SearchKit extends Plugin
         return $this->get('analytics');
     }
 
+    public function getApi(): Api
+    {
+        return $this->get('api');
+    }
+
+    public function getApiKeys(): ApiKeys
+    {
+        return $this->get('apiKeys');
+    }
+
+    public function getCommerce(): Commerce
+    {
+        return $this->get('commerce');
+    }
+
     public function getDashboardLayouts(): DashboardLayouts
     {
         return $this->get('dashboardLayouts');
+    }
+
+    public function getDebugger(): Debugger
+    {
+        return $this->get('debugger');
     }
 
     public function getDocuments(): Documents
@@ -303,9 +430,24 @@ class SearchKit extends Plugin
         return $this->get('insights');
     }
 
+    public function getIntelligence(): Intelligence
+    {
+        return $this->get('intelligence');
+    }
+
+    public function getIntent(): Intent
+    {
+        return $this->get('intent');
+    }
+
     public function getProviders(): Providers
     {
         return $this->get('providers');
+    }
+
+    public function getRecommendations(): Recommendations
+    {
+        return $this->get('recommendations');
     }
 
     public function getRuleEngine(): RuleEngine

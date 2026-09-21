@@ -373,6 +373,27 @@ class RuleEngineTest extends TestCase
         self::assertSame('/support', $result->redirect);
     }
 
+    public function testASiteSpecificRedirectNeverSendsASearchNamingSeveralSites(): void
+    {
+        $this->rule(['siteId' => 1], [$this->redirect('/support')], $this->everySite);
+
+        $result = $this->search([[1, 10.0, 1], [2, 9.0, 3]], ['sites' => [1, 3]], index: $this->everySite);
+
+        // A list of sites is still more than the one the rule was written for.
+        self::assertNull($result->redirect);
+        self::assertSame('redirectNarrowerThanSearch', $result->rules[0]->effects[0]['outcome']);
+    }
+
+    public function testARuleCannotActOnASiteTheSearchDidNotName(): void
+    {
+        $this->rule(['siteId' => 3], [$this->hide(5)], $this->everySite);
+
+        $result = $this->search([[5, 10.0, 1]], ['sites' => [1, 2]], index: $this->everySite);
+
+        self::assertSame([5], $result->getElementIds());
+        self::assertSame('siteOutsideSearchScope', $result->rules[0]->effects[0]['outcome']);
+    }
+
     public function testARedirectFromARuleCoveringTheWholeIndexAlwaysApplies(): void
     {
         // The index covers one site, so a rule naming that site covers the whole search.

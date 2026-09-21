@@ -152,7 +152,7 @@ class DashboardController extends Controller
                 'trend' => $insights->condenseTrend($insights->getTrend($criteria), self::CHART_POINTS),
                 'popularQueries' => $insights->getPopularQueries($criteria),
                 'zeroResultQueries' => $insights->getZeroResultQueries($criteria),
-                'unopenedQueries' => $insights->getContentGaps($criteria),
+                'unopenedQueries' => $insights->getUnopenedQueries($criteria),
                 'slowQueries' => $insights->getSlowQueries($criteria),
                 'clickedResults' => $insights->getClickedResults($criteria),
                 'unavailable' => false,

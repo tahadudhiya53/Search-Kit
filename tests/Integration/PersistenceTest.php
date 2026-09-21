@@ -9,7 +9,7 @@ use Tahadudhiya\SearchKit\db\Table;
 use Tahadudhiya\SearchKit\enums\PartialMatchMode;
 use Tahadudhiya\SearchKit\models\SearchableField;
 use Tahadudhiya\SearchKit\models\SearchIndex;
-use Tahadudhiya\SearchKit\providers\CraftProvider;
+use Tahadudhiya\SearchKit\providers\MeilisearchProvider;
 
 /**
  * Round-trips SearchKit's configuration through the real database.
@@ -21,9 +21,11 @@ class PersistenceTest extends IntegrationTestCase
         $index = $this->persistIndex(new SearchIndex([
             'name' => 'Round Trip',
             'handle' => $this->uniqueHandle(),
-            'provider' => CraftProvider::class,
+            'provider' => MeilisearchProvider::class,
             'enabled' => false,
-            'settings' => ['pageSize' => 25, 'nested' => ['a' => 1]],
+            // Settings a provider actually declares: anything else is refused at save, so what is
+            // stored is always something the provider can be built from.
+            'settings' => ['url' => 'http://localhost:7700', 'indexPrefix' => 'roundTrip'],
             'siteId' => Craft::$app->getSites()->getPrimarySite()->id,
         ]));
 
@@ -36,11 +38,50 @@ class PersistenceTest extends IntegrationTestCase
         self::assertNotNull($read);
         self::assertSame($index->id, $read->id);
         self::assertSame('Round Trip', $read->name);
-        self::assertSame(CraftProvider::class, $read->provider);
+        self::assertSame(MeilisearchProvider::class, $read->provider);
         self::assertFalse($read->enabled);
-        self::assertSame(['pageSize' => 25, 'nested' => ['a' => 1]], $read->settings);
+        self::assertSame(['url' => 'http://localhost:7700', 'indexPrefix' => 'roundTrip'], $read->settings);
         self::assertSame(Craft::$app->getSites()->getPrimarySite()->id, $read->siteId);
         self::assertSame($index->uid, $read->uid);
+    }
+
+    public function testProviderSettingsAreValidatedBeforeTheyAreStored(): void
+    {
+        $undeclared = $this->newIndex(MeilisearchProvider::class);
+        $undeclared->settings = ['url' => 'http://localhost:7700', 'pageSize' => 25];
+
+        self::assertFalse($this->plugin()->getIndexes()->saveIndex($undeclared));
+        self::assertNotSame([], $undeclared->getErrors('settings'));
+
+        // A key typed in rather than named would be stored here and shown back to whoever can open
+        // the index, so it is refused before it reaches the database.
+        $literalKey = $this->newIndex(MeilisearchProvider::class);
+        $literalKey->settings = ['url' => 'http://localhost:7700', 'apiKey' => 'a-real-looking-master-key'];
+
+        self::assertFalse($this->plugin()->getIndexes()->saveIndex($literalKey));
+        self::assertNotSame([], $literalKey->getErrors('settings'));
+    }
+
+    public function testAProviderIsNeverServedFromSettingsThatHaveBeenReplaced(): void
+    {
+        $index = $this->newIndex(MeilisearchProvider::class);
+        $index->settings = ['url' => 'http://localhost:7700'];
+        $this->persistIndex($index);
+
+        $providers = $this->plugin()->getProviders();
+
+        /** @var MeilisearchProvider $before */
+        $before = $providers->getProviderForIndex($index);
+        self::assertSame('http://localhost:7700', $before->url);
+
+        $index->settings = ['url' => 'http://localhost:7701'];
+        self::assertTrue($this->plugin()->getIndexes()->saveIndex($index));
+
+        /** @var MeilisearchProvider $after */
+        $after = $providers->getProviderForIndex($index);
+
+        // Held over, it would go on reaching the server the replaced settings named.
+        self::assertSame('http://localhost:7701', $after->url);
     }
 
     public function testANewIndexReportsTheGenerationItIsActuallyOn(): void
@@ -54,6 +95,19 @@ class PersistenceTest extends IntegrationTestCase
             $index->configurationVersion,
         );
         self::assertTrue($this->plugin()->getIndexes()->markRebuildComplete($index, $index->configurationVersion));
+    }
+
+    public function testEveryIndexGetsAnIdentifierOfItsOwn(): void
+    {
+        $index = $this->persistIndex($this->newIndex());
+        $other = $this->persistIndex($this->newIndex());
+
+        // A GraphQL schema names an index by its uid, so two indexes sharing one would let a
+        // schema granted access to either search both.
+        self::assertNotEmpty($index->uid);
+        self::assertNotSame('0', $index->uid);
+        self::assertNotSame($index->uid, $other->uid);
+        self::assertSame($index->uid, $this->freshIndexes()->getIndexByHandle($index->handle)?->uid);
     }
 
     public function testSearchBehaviourRoundTripsWithTheIndex(): void

@@ -467,8 +467,11 @@ class Indexing extends Component
     {
         $terms = [];
 
+        // Reduced in the document's own site language, which is what Craft indexes its keywords in.
+        $language = $this->getNormalization()->siteLanguage($document->siteId);
+
         foreach ($document->getFields() as $value) {
-            foreach ($this->getNormalization()->terms($value) as $term) {
+            foreach ($this->getNormalization()->terms($value, $language) as $term) {
                 $terms[] = $term;
             }
         }

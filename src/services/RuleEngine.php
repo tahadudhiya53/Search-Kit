@@ -50,8 +50,8 @@ class RuleEngine extends Component
 
         $normalized = $this->getNormalization()->normalize($text ?? $query->text);
 
-        // The sites this search covers: one of them, or every site the index does.
-        $scopeSiteId = $query->siteId ?? $index->siteId;
+        // The sites this search covers, or null for every site there is.
+        $scope = $query->getSiteScope($index->siteId);
         $matched = [];
 
         foreach ($this->getRules()->getRulesForIndex((int)$index->id, $query->siteId) as $rule) {
@@ -67,11 +67,11 @@ class RuleEngine extends Component
         // arrive highest priority first, so the first claim on a result is the one that stands, and
         // an adjustment then applies only to a result no rule claimed.
         foreach ($matched as [$rule, $evaluation]) {
-            $this->resolveExclusive($rule, $evaluation, $plan, $index, $scopeSiteId);
+            $this->resolveExclusive($rule, $evaluation, $plan, $index, $scope);
         }
 
         foreach ($matched as [$rule, $evaluation]) {
-            $this->resolveAdjustments($rule, $evaluation, $plan, $index, $scopeSiteId);
+            $this->resolveAdjustments($rule, $evaluation, $plan, $index, $scope);
         }
 
         $this->decideWindow($plan, $query);
@@ -268,13 +268,13 @@ class RuleEngine extends Component
         RuleEvaluation $evaluation,
         RulePlan $plan,
         SearchIndex $index,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): void {
         $ruleId = (int)$rule->id;
 
         foreach ($rule->getActions() as $action) {
             if ($action->type === RuleActionType::Redirect) {
-                $this->claimRedirect($action, $rule, $evaluation, $plan, $scopeSiteId);
+                $this->claimRedirect($action, $rule, $evaluation, $plan, $scope);
                 continue;
             }
 
@@ -282,7 +282,7 @@ class RuleEngine extends Component
                 continue;
             }
 
-            $target = $this->target($action, $rule, $index, $evaluation, $scopeSiteId);
+            $target = $this->target($action, $rule, $index, $evaluation, $scope);
 
             if ($target === null) {
                 continue;
@@ -312,14 +312,14 @@ class RuleEngine extends Component
         RuleEvaluation $evaluation,
         RulePlan $plan,
         SearchIndex $index,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): void {
         foreach ($rule->getActions() as $action) {
             if (!$action->type->adjustsScore()) {
                 continue;
             }
 
-            $target = $this->target($action, $rule, $index, $evaluation, $scopeSiteId);
+            $target = $this->target($action, $rule, $index, $evaluation, $scope);
 
             if ($target === null) {
                 continue;
@@ -353,6 +353,7 @@ class RuleEngine extends Component
      * The result an action acts on, with the site it acts in settled. An action outside the site
      * scope the rule was read for is refused rather than quietly reaching another site.
      *
+     * @param int[]|null $scope The sites this search covers, or null for every site there is.
      * @return array{elementId:int,elementType:string,siteId:int|null}|null
      */
     private function target(
@@ -360,7 +361,7 @@ class RuleEngine extends Component
         SearchRule $rule,
         SearchIndex $index,
         RuleEvaluation $evaluation,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): ?array {
         if ($action->elementId === null || $action->elementType === null) {
             $this->record($evaluation, $action, false, 'noTarget');
@@ -391,7 +392,7 @@ class RuleEngine extends Component
         }
 
         // Nothing may act outside the sites this search covers, whatever the rule asked for.
-        if ($siteId !== null && $scopeSiteId !== null && $siteId !== $scopeSiteId) {
+        if ($siteId !== null && $scope !== null && !in_array($siteId, $scope, true)) {
             $this->record($evaluation, $action, false, 'siteOutsideSearchScope');
 
             return null;
@@ -414,9 +415,10 @@ class RuleEngine extends Component
         SearchRule $rule,
         RuleEvaluation $evaluation,
         RulePlan $plan,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): void {
-        if ($rule->siteId !== null && $rule->siteId !== $scopeSiteId) {
+        // A rule written for one site only redirects a search of that site and nothing else.
+        if ($rule->siteId !== null && $scope !== [$rule->siteId]) {
             $this->record($evaluation, $action, false, 'redirectNarrowerThanSearch');
 
             return;
@@ -447,6 +449,7 @@ class RuleEngine extends Component
 
         $plan->hidden[$key] = [
             'elementId' => $target['elementId'],
+            'elementType' => $target['elementType'],
             'siteId' => $target['siteId'],
             'ruleId' => $ruleId,
         ];

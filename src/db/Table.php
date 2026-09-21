@@ -17,4 +17,5 @@ abstract class Table
     public const SEARCHEVENTS = '{{%searchkit_searchevents}}';
     public const SEARCHCLICKS = '{{%searchkit_searchclicks}}';
     public const DASHBOARDLAYOUTS = '{{%searchkit_dashboardlayouts}}';
+    public const APIKEYS = '{{%searchkit_apikeys}}';
 }

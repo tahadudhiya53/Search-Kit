@@ -29,7 +29,7 @@ class RulePlan extends Model
     /** @var int|null The rule that claimed the redirect. */
     public ?int $redirectRuleId = null;
 
-    /** @var array<string,array{elementId:int,siteId:int|null,ruleId:int}> Results left out entirely. */
+    /** @var array<string,array{elementId:int,elementType:string,siteId:int|null,ruleId:int}> Results left out. */
     public array $hidden = [];
 
     /** @var array<int,array{elementId:int,elementType:string,siteId:int,ruleId:int}> Position => target. */
