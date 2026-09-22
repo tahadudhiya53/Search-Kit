@@ -227,6 +227,11 @@ class AdvancedSearchTest extends SearchContentTestCase
     public function testASiteListCannotWidenAnIndexesScope(): void
     {
         $siteIds = $this->fieldSectionSiteIds();
+
+        if (count($siteIds) < 2) {
+            self::markTestSkipped('This project needs a section enabled for at least two sites.');
+        }
+
         $index = $this->persistIndexWithFields([Entry::class => 'title'], CraftProvider::class, $siteIds[0]);
 
         $this->expectException(InvalidQueryException::class);

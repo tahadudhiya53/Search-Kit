@@ -350,4 +350,11 @@
   from it could never report the index as current.
 - Every search index was saved with the same placeholder identifier instead of one of its own,
   which a GraphQL schema now relies on to tell one index from another.
+- A page that reached into the pinned and promoted results was read at a shifted offset whenever
+  the results ran past the reordering window, which dropped the placed results below it and could
+  ask the provider for a negative offset. Giving up the reordering no longer gives up assembling
+  the page.
+- A Meilisearch server error while checking whether an index exists was read as the index being
+  absent, so a rebuild discarded nothing and then failed creating an index that was already there.
+  Only a 404 now means absent; anything else is a failure.
 

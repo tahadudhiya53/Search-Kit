@@ -137,8 +137,7 @@ class RuleEngine extends Component
     /**
      * Applies the plan to what the provider returned, and cuts it back to the page that was asked
      * for. Hits carry only identifiers here, so nothing in this class loads an element.
-     */
-    /**
+     *
      * @param SearchHit[] $adjusted The results a boost or a bury moves, fetched in their own right.
      */
     public function apply(
@@ -534,10 +533,16 @@ class RuleEngine extends Component
         $reach = $query->offset + $query->limit;
         $wantsReordering = $plan->adjustments !== [] && $plan->reorderSkipped === null;
 
-        // Reordering needs every result above the page, which is only affordable so far in.
-        $beyondWindow = $wantsReordering && $reach > self::REORDER_LIMIT;
+        // Reordering needs every result above the page, which is only affordable so far in. Past
+        // that the page is still assembled where it has to be — only the reordering is given up.
+        if ($wantsReordering && $reach > self::REORDER_LIMIT) {
+            $plan->reorderSkipped = RulePlan::SKIPPED_BEYOND_WINDOW;
+            $wantsReordering = false;
+        }
 
-        if (!$beyondWindow && ($wantsReordering || $query->offset < $plan->placedReach())) {
+        // A page reaching into the placed results has to be assembled whatever else happens: only
+        // past placedReach() is the list organic enough to read at a shifted offset.
+        if ($wantsReordering || $query->offset < $plan->placedReach()) {
             $plan->assembles = true;
             $plan->windowOffset = 0;
             $plan->windowLimit = $reach;
@@ -549,10 +554,6 @@ class RuleEngine extends Component
             $plan->refetchesAdjusted = $wantsReordering && !$query->hasFilterOn('id');
 
             return;
-        }
-
-        if ($beyondWindow) {
-            $plan->reorderSkipped = RulePlan::SKIPPED_BEYOND_WINDOW;
         }
 
         $plan->assembles = false;

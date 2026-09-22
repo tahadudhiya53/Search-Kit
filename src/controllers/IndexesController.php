@@ -179,9 +179,6 @@ class IndexesController extends Controller
     }
 
     /**
-     * @return array<array{label:string,value:string}>
-     */
-    /**
      * What each provider can do, so an index's behaviour is visible where it is chosen rather than
      * only discovered when a search is refused.
      *

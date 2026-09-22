@@ -326,14 +326,9 @@ class Suggestions extends Component
     }
 
     /**
-     * The first of these words anybody may find. Candidates arrive shortest first and then in
-     * alphabetical order, and every one of them is asked about, so a correction buried under any
-     * number of hidden words is still found and the same query always corrects the same way.
-     *
-     * @param string[] $candidates
-     */
-    /**
-     * The first of these words the index holds in a site anybody may find it in.
+     * The first of these words the index holds in a site anybody may find it in. Candidates arrive
+     * shortest first and then alphabetically, and every one is asked about, so the same query
+     * always corrects the same way however many hidden words it is buried under.
      *
      * @param int|int[]|null $siteId
      * @param string[] $texts
@@ -371,9 +366,6 @@ class Suggestions extends Component
      * index has no more words starting that way. A run of hidden words delays the answer rather
      * than cutting it short.
      *
-     * @return string[]
-     */
-    /**
      * @param int|int[]|null $siteId
      * @return string[]
      */

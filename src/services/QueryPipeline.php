@@ -199,8 +199,6 @@ class QueryPipeline extends Component
 
     /**
      * @param bool $quoted Whether the term was written as a phrase.
-     */
-    /**
      * @param string[] $languages Every language the term is read in, the first one deciding its text.
      */
     private function createTerm(string $token, bool $quoted, bool $excluded, array $languages): ?QueryTerm

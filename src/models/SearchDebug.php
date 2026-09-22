@@ -196,8 +196,7 @@ class SearchDebug extends Model
 
     /**
      * One call to the provider, recorded where it was made.
-     */
-    /**
+     *
      * @param array<string,mixed> $diagnostics What the provider declared safe to show about it.
      */
     public function recordExecution(

@@ -103,7 +103,17 @@ class MeilisearchClient
      */
     public function indexExists(string $indexUid): bool
     {
-        return $this->send('GET', "indexes/$indexUid")['status'] === 200;
+        $response = $this->send('GET', "indexes/$indexUid");
+
+        if ($response['status'] === 200 || $response['status'] === 404) {
+            return $response['status'] === 200;
+        }
+
+        // Anything else is a failure, not an absence: read as “no index”, a server error would have
+        // a rebuild discard nothing and then fail creating what is already there.
+        $this->log("Meilisearch answered GET indexes/$indexUid with {$response['status']}: {$response['body']}");
+
+        throw new ProviderException($this->failureMessage($response));
     }
 
     /**

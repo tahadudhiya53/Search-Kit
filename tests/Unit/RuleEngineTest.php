@@ -725,6 +725,29 @@ class RuleEngineTest extends TestCase
         self::assertSame(RuleEngine::REORDER_LIMIT, $plan->windowOffset);
     }
 
+    /**
+     * Giving up the reordering must not also give up assembling: a page reaching into the placed
+     * results still has to be built from the top, or the pins below it are read straight past.
+     */
+    public function testAPageInsideThePlacedResultsIsStillAssembledWhenReorderingIsGivenUp(): void
+    {
+        $this->rule([], [$this->pin(901, 9), $this->pin(902, 10), $this->boost(3, 100.0)]);
+
+        // Reaches past the reordering window, while the page itself sits inside the pinned results.
+        $query = SearchQuery::create('siteSearch', 'shoes', ['limit' => RuleEngine::REORDER_LIMIT, 'offset' => 1]);
+        $plan = $this->engine->plan($query, $this->index);
+
+        self::assertFalse($plan->reordered);
+        self::assertSame(RulePlan::SKIPPED_BEYOND_WINDOW, $plan->reorderSkipped);
+
+        self::assertTrue($plan->assembles, 'A page inside the placed results has to be assembled.');
+        self::assertSame(0, $plan->windowOffset);
+        self::assertSame(RuleEngine::REORDER_LIMIT + 1, $plan->windowLimit);
+
+        // Shifting by the placed count here would have asked the provider for a negative offset.
+        self::assertGreaterThanOrEqual(0, (int)$this->engine->windowQuery($query, $plan)->offset);
+    }
+
     // ---------------------------------------------------------------- explanation
 
     public function testEveryRuleConsideredIsCarriedOnTheResultWithWhyAndWhat(): void

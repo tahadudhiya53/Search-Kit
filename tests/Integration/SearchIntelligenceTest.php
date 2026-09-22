@@ -661,6 +661,9 @@ class SearchIntelligenceTest extends SearchContentTestCase
 
     private function measuredIndex(?AnalyticsSettings $settings = null): SearchIndex
     {
+        // Skips rather than fails where the project carries no such field, as every other content test does.
+        $this->fieldEntryType();
+
         $index = $this->persistIndexWithFields([Entry::class => self::FIELD]);
 
         if ($settings !== null) {
