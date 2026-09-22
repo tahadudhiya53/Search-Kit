@@ -14,7 +14,6 @@ use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
-use yii\base\InvalidConfigException;
 
 /**
  * Runs a GraphQL search through the same search service PHP and Twig use. What may be searched is
@@ -36,7 +35,7 @@ class SearchResolver
     public static function resolve(mixed $source, array $arguments, mixed $context, ResolveInfo $resolveInfo): SearchResult
     {
         $handle = (string)($arguments['index'] ?? '');
-        $index = self::plugin()->getIndexes()->getIndexByHandle($handle);
+        $index = SearchKit::instance()->getIndexes()->getIndexByHandle($handle);
 
         // An index this schema does not name is reported as though it were not there, so a token
         // can never be used to find out which indexes exist.
@@ -48,7 +47,7 @@ class SearchResolver
             $query = SearchQuery::create($handle, (string)($arguments['q'] ?? ''), self::params($arguments));
             self::assertSitesAreAllowed($query, $index);
 
-            return self::plugin()->getSearch()->search($query);
+            return SearchKit::instance()->getSearch()->search($query);
         } catch (SearchKitException $e) {
             // SearchKit's own messages are written to be shown; nothing else is passed on.
             throw new UserError(self::message($e));
@@ -145,11 +144,5 @@ class SearchResolver
         }
 
         return $normalized;
-    }
-
-    private static function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 }

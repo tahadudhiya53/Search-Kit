@@ -14,7 +14,6 @@ use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
 use yii\base\Event;
-use yii\base\InvalidConfigException;
 
 /**
  * Craft Commerce support, kept wholly on this side of the boundary: nothing in SearchKit's core
@@ -306,7 +305,7 @@ class Commerce extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= $this->plugin()->getIndexes();
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 
     public function setSearchableFields(SearchableFields $searchableFields): void
@@ -316,7 +315,7 @@ class Commerce extends Component
 
     public function getSearchableFields(): SearchableFields
     {
-        return $this->_searchableFields ??= $this->plugin()->getSearchableFields();
+        return $this->_searchableFields ??= SearchKit::instance()->getSearchableFields();
     }
 
     public function setIndexing(Indexing $indexing): void
@@ -326,17 +325,6 @@ class Commerce extends Component
 
     public function getIndexing(): Indexing
     {
-        return $this->_indexing ??= $this->plugin()->getIndexing();
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new InvalidConfigException('Search Kit is not installed or is disabled.');
-        }
-
-        return $plugin;
+        return $this->_indexing ??= SearchKit::instance()->getIndexing();
     }
 }

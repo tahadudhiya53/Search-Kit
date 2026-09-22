@@ -3,19 +3,18 @@
 namespace Tahadudhiya\SearchKit\controllers;
 
 use Craft;
-use craft\web\Controller;
+use Tahadudhiya\SearchKit\base\InsightsController;
 use Tahadudhiya\SearchKit\models\DashboardLayout;
 use Tahadudhiya\SearchKit\models\InsightsCriteria;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
-use yii\web\ForbiddenHttpException;
 use yii\web\Response;
 
 /**
  * An overview of how search is doing: what was searched for, what came of it, and how the indexes
  * serving it are holding up. It reads recorded activity and never runs a search.
  */
-class DashboardController extends Controller
+class DashboardController extends InsightsController
 {
     /** @var int Rows each table on the overview shows. Everything else is a page away. */
     private const TABLE_ROWS = 8;
@@ -36,28 +35,9 @@ class DashboardController extends Controller
 
     public function actionIndex(): Response
     {
-        $plugin = $this->plugin();
         $criteria = InsightsCriteria::fromRequest($this->request->getQueryParams());
         $criteria->limit = self::TABLE_ROWS;
-        $criteria->slowThreshold = $criteria->indexId !== null
-            ? ($plugin->getIndexes()->getIndexById($criteria->indexId)?->getAnalyticsSettings()->slowThreshold
-                ?? $criteria->slowThreshold)
-            : $criteria->slowThreshold;
-
-        $indexes = $plugin->getIndexes()->getAllIndexes();
-
-        // Names are resolved once rather than per row, so a long table costs no more lookups.
-        $indexNames = [];
-
-        foreach ($indexes as $index) {
-            $indexNames[(int)$index->id] = $index->name;
-        }
-
-        $siteNames = [];
-
-        foreach (Craft::$app->getSites()->getAllSites(true) as $site) {
-            $siteNames[(int)$site->id] = $site->name;
-        }
+        $criteria->slowThreshold = $this->slowThreshold($criteria);
 
         return $this->renderTemplate('search-kit/dashboard/_index', array_merge([
             'criteria' => $criteria,
@@ -65,8 +45,8 @@ class DashboardController extends Controller
             // Arranging is a mode of the page rather than a page of its own, so the filters hold.
             'arranging' => (string)$this->request->getQueryParam('layout') === 'arrange',
             'health' => $this->health(),
-            'indexNames' => $indexNames,
-            'siteNames' => $siteNames,
+            'indexNames' => $this->indexNames(),
+            'siteNames' => $this->siteNames(),
             'minSearches' => $criteria->minSearches,
         ], $this->activity($criteria)));
     }
@@ -101,7 +81,7 @@ class DashboardController extends Controller
                 return $this->asFailure(Craft::t('search-kit', 'That is not something a panel can do.'));
         }
 
-        if ($userId === null || !$this->plugin()->getDashboardLayouts()->save($userId, $layout)) {
+        if ($userId === null || !SearchKit::instance()->getDashboardLayouts()->save($userId, $layout)) {
             return $this->asFailure(Craft::t('search-kit', 'Couldn’t save your dashboard arrangement.'));
         }
 
@@ -118,7 +98,7 @@ class DashboardController extends Controller
         $userId = Craft::$app->getUser()->getId();
 
         if ($userId !== null) {
-            $this->plugin()->getDashboardLayouts()->reset($userId);
+            SearchKit::instance()->getDashboardLayouts()->reset($userId);
         }
 
         return $this->asSuccess(Craft::t('search-kit', 'Dashboard arrangement reset.'));
@@ -132,7 +112,7 @@ class DashboardController extends Controller
         $userId = Craft::$app->getUser()->getId();
 
         return $userId !== null
-            ? $this->plugin()->getDashboardLayouts()->getForUser($userId)
+            ? SearchKit::instance()->getDashboardLayouts()->getForUser($userId)
             : DashboardLayout::fromConfig(null);
     }
 
@@ -144,7 +124,7 @@ class DashboardController extends Controller
      */
     private function activity(InsightsCriteria $criteria): array
     {
-        $insights = $this->plugin()->getInsights();
+        $insights = SearchKit::instance()->getInsights();
 
         try {
             return [
@@ -180,7 +160,7 @@ class DashboardController extends Controller
      */
     private function health(): array
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $health = [];
 
         foreach ($plugin->getIndexes()->getAllIndexes() as $index) {
@@ -192,16 +172,5 @@ class DashboardController extends Controller
         }
 
         return $health;
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('Search Kit is not installed.');
-        }
-
-        return $plugin;
     }
 }

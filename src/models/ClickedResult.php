@@ -31,6 +31,24 @@ class ClickedResult extends Model
     /** @var string|null Where an administrator can open it, when they are allowed to. */
     public ?string $cpEditUrl = null;
 
+    /**
+     * One grouped row of clicks. `clickSiteId` is the click's own site, aliased apart from the
+     * searching site the event carries, which is what both readings of clicks select it as.
+     *
+     * @param array<string,mixed> $row
+     */
+    public static function fromRow(array $row): self
+    {
+        return new self([
+            'query' => isset($row['normalizedQuery']) ? (string)$row['normalizedQuery'] : null,
+            'elementId' => (int)$row['elementId'],
+            'elementType' => (string)$row['elementType'],
+            'siteId' => (int)$row['clickSiteId'],
+            'clicks' => (int)$row['clicks'],
+            'averagePosition' => round((float)$row['averagePosition'], 2),
+        ]);
+    }
+
     public function isResolved(): bool
     {
         return $this->label !== null && $this->label !== '';

@@ -7,7 +7,6 @@ use Tahadudhiya\SearchKit\models\ParsedQuery;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 use yii\caching\CacheInterface;
 use yii\caching\TagDependency;
 
@@ -498,7 +497,7 @@ class Suggestions extends Component
 
     public function getTerms(): Terms
     {
-        return $this->_terms ??= $this->plugin()->getTerms();
+        return $this->_terms ??= SearchKit::instance()->getTerms();
     }
 
     public function setIntelligence(Intelligence $intelligence): void
@@ -508,7 +507,7 @@ class Suggestions extends Component
 
     public function getIntelligence(): Intelligence
     {
-        return $this->_intelligence ??= $this->plugin()->getIntelligence();
+        return $this->_intelligence ??= SearchKit::instance()->getIntelligence();
     }
 
     public function setNormalization(Normalization $normalization): void
@@ -518,12 +517,6 @@ class Suggestions extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 }

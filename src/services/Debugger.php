@@ -15,7 +15,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Runs a search that records what it does, for someone asking why it returned what it did. It runs
@@ -106,7 +105,6 @@ class Debugger extends Component
 
     public function getSearch(): Search
     {
-        return $this->_search ??= SearchKit::getInstance()?->getSearch()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_search ??= SearchKit::instance()->getSearch();
     }
 }

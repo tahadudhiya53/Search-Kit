@@ -16,7 +16,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 use yii\caching\TagDependency;
 use yii\db\Expression;
 
@@ -304,7 +303,7 @@ class Analytics extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 
     public function setIndexes(Indexes $indexes): void
@@ -314,17 +313,6 @@ class Analytics extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= $this->plugin()->getIndexes();
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new InvalidConfigException('Search Kit is not installed or is disabled.');
-        }
-
-        return $plugin;
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 }

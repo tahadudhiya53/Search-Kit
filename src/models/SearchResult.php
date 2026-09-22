@@ -59,11 +59,6 @@ class SearchResult extends Model
         return $this->correctedText !== null;
     }
 
-    public function isTracked(): bool
-    {
-        return $this->trackingToken !== null;
-    }
-
     public function hasRedirect(): bool
     {
         return $this->redirect !== null;

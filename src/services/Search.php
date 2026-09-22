@@ -26,7 +26,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Runs a search query through the index's provider and returns a normalized result.
@@ -794,7 +793,7 @@ class Search extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= $this->plugin()->getIndexes();
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 
     public function setSearchableFields(SearchableFields $searchableFields): void
@@ -804,7 +803,7 @@ class Search extends Component
 
     public function getSearchableFields(): SearchableFields
     {
-        return $this->_searchableFields ??= $this->plugin()->getSearchableFields();
+        return $this->_searchableFields ??= SearchKit::instance()->getSearchableFields();
     }
 
     public function setHighlighting(Highlighting $highlighting): void
@@ -814,7 +813,7 @@ class Search extends Component
 
     public function getHighlighting(): Highlighting
     {
-        return $this->_highlighting ??= $this->plugin()->getHighlighting();
+        return $this->_highlighting ??= SearchKit::instance()->getHighlighting();
     }
 
     public function setQueryPipeline(QueryPipeline $queryPipeline): void
@@ -824,7 +823,7 @@ class Search extends Component
 
     public function getQueryPipeline(): QueryPipeline
     {
-        return $this->_queryPipeline ??= $this->plugin()->getQueryPipeline();
+        return $this->_queryPipeline ??= SearchKit::instance()->getQueryPipeline();
     }
 
     public function setSuggestions(Suggestions $suggestions): void
@@ -834,7 +833,7 @@ class Search extends Component
 
     public function getSuggestions(): Suggestions
     {
-        return $this->_suggestions ??= $this->plugin()->getSuggestions();
+        return $this->_suggestions ??= SearchKit::instance()->getSuggestions();
     }
 
     public function setRuleEngine(RuleEngine $ruleEngine): void
@@ -844,7 +843,7 @@ class Search extends Component
 
     public function getRuleEngine(): RuleEngine
     {
-        return $this->_ruleEngine ??= $this->plugin()->getRuleEngine();
+        return $this->_ruleEngine ??= SearchKit::instance()->getRuleEngine();
     }
 
     public function setProviders(Providers $providers): void
@@ -854,17 +853,6 @@ class Search extends Component
 
     public function getProviders(): Providers
     {
-        return $this->_providers ??= $this->plugin()->getProviders();
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new InvalidConfigException('Search Kit is not installed or is disabled.');
-        }
-
-        return $plugin;
+        return $this->_providers ??= SearchKit::instance()->getProviders();
     }
 }

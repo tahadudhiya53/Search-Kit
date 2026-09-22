@@ -2,7 +2,6 @@
 
 namespace Tahadudhiya\SearchKit\gql\types;
 
-use craft\base\ElementInterface;
 use craft\gql\base\ObjectType;
 use craft\gql\GqlEntityRegistry;
 use GraphQL\Type\Definition\ResolveInfo;
@@ -113,25 +112,11 @@ class SearchHitType extends ObjectType
         $field = is_string($arguments['field'] ?? null) ? $arguments['field'] : null;
 
         return match ($resolveInfo->fieldName) {
-            'elementType' => self::elementType($source),
+            'elementType' => $source->getElementTypeHandle(),
             'finalScore' => $source->getFinalScore(),
             'snippet' => $source->getSnippet($field),
             'highlight' => (string)$source->getHighlight($field) ?: null,
             default => parent::resolve($source, $arguments, $context, $resolveInfo),
         };
-    }
-
-    /**
-     * The same vocabulary a filter uses, rather than a class name.
-     */
-    private static function elementType(SearchHit $hit): ?string
-    {
-        $elementType = $hit->elementType;
-
-        if ($elementType === null || !is_subclass_of($elementType, ElementInterface::class)) {
-            return $elementType;
-        }
-
-        return $elementType::refHandle() ?? $elementType;
     }
 }

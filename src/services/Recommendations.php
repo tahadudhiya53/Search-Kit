@@ -13,7 +13,6 @@ use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SynonymCandidate;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * What somebody could do about what the recorded activity shows. Each recommendation carries the
@@ -179,7 +178,6 @@ class Recommendations extends Component
 
     public function getIntelligence(): Intelligence
     {
-        return $this->_intelligence ??= SearchKit::getInstance()?->getIntelligence()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_intelligence ??= SearchKit::instance()->getIntelligence();
     }
 }

@@ -25,7 +25,6 @@ use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Keeps indexes in step with Craft content: what needs indexing, when it happens, and what to do
@@ -589,7 +588,7 @@ class Indexing extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= $this->plugin()->getIndexes();
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 
     public function setSearchableFields(SearchableFields $searchableFields): void
@@ -599,7 +598,7 @@ class Indexing extends Component
 
     public function getSearchableFields(): SearchableFields
     {
-        return $this->_searchableFields ??= $this->plugin()->getSearchableFields();
+        return $this->_searchableFields ??= SearchKit::instance()->getSearchableFields();
     }
 
     public function setProviders(Providers $providers): void
@@ -609,7 +608,7 @@ class Indexing extends Component
 
     public function getProviders(): Providers
     {
-        return $this->_providers ??= $this->plugin()->getProviders();
+        return $this->_providers ??= SearchKit::instance()->getProviders();
     }
 
     public function setDocuments(Documents $documents): void
@@ -619,7 +618,7 @@ class Indexing extends Component
 
     public function getDocuments(): Documents
     {
-        return $this->_documents ??= $this->plugin()->getDocuments();
+        return $this->_documents ??= SearchKit::instance()->getDocuments();
     }
 
     public function setOperations(IndexOperations $operations): void
@@ -629,7 +628,7 @@ class Indexing extends Component
 
     public function getOperations(): IndexOperations
     {
-        return $this->_operations ??= $this->plugin()->getIndexOperations();
+        return $this->_operations ??= SearchKit::instance()->getIndexOperations();
     }
 
     public function setTerms(Terms $terms): void
@@ -639,7 +638,7 @@ class Indexing extends Component
 
     public function getTerms(): Terms
     {
-        return $this->_terms ??= $this->plugin()->getTerms();
+        return $this->_terms ??= SearchKit::instance()->getTerms();
     }
 
     public function setNormalization(Normalization $normalization): void
@@ -649,17 +648,6 @@ class Indexing extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new InvalidConfigException('Search Kit is not installed or is disabled.');
-        }
-
-        return $plugin;
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 }

@@ -12,7 +12,6 @@ use Tahadudhiya\SearchKit\models\Synonym;
 use Tahadudhiya\SearchKit\records\SynonymRecord;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * The words a search treats as the same thing. Every search reads these, so they are cached rather
@@ -295,17 +294,11 @@ class Synonyms extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 
     private function getIndexes(): Indexes
     {
-        return $this->plugin()->getIndexes();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return SearchKit::instance()->getIndexes();
     }
 }

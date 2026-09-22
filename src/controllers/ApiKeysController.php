@@ -7,7 +7,6 @@ use craft\web\Controller;
 use Tahadudhiya\SearchKit\models\ApiKey;
 use Tahadudhiya\SearchKit\SearchKit;
 use Tahadudhiya\SearchKit\services\ApiKeys;
-use yii\web\ForbiddenHttpException;
 use yii\web\NotFoundHttpException;
 use yii\web\Response;
 
@@ -34,8 +33,8 @@ class ApiKeysController extends Controller
     public function actionIndex(): Response
     {
         return $this->renderTemplate('search-kit/apikeys/_index', [
-            'keys' => $this->plugin()->getApiKeys()->getAllKeys(),
-            'indexes' => $this->plugin()->getIndexes()->getAllIndexes(),
+            'keys' => SearchKit::instance()->getApiKeys()->getAllKeys(),
+            'indexes' => SearchKit::instance()->getIndexes()->getAllIndexes(),
             'newKey' => Craft::$app->getSession()->getFlash(self::FLASH_NEW_KEY),
         ]);
     }
@@ -43,7 +42,7 @@ class ApiKeysController extends Controller
     public function actionEdit(?int $keyId = null, ?ApiKey $key = null): Response
     {
         $key ??= $keyId !== null
-            ? $this->plugin()->getApiKeys()->getKeyById($keyId)
+            ? SearchKit::instance()->getApiKeys()->getKeyById($keyId)
             : new ApiKey(['rateLimit' => ApiKeys::DEFAULT_RATE_LIMIT]);
 
         if ($key === null) {
@@ -53,7 +52,7 @@ class ApiKeysController extends Controller
         return $this->renderTemplate('search-kit/apikeys/_edit', [
             'key' => $key,
             'isNew' => $key->id === null,
-            'indexes' => $this->plugin()->getIndexes()->getAllIndexes(),
+            'indexes' => SearchKit::instance()->getIndexes()->getAllIndexes(),
         ]);
     }
 
@@ -65,7 +64,7 @@ class ApiKeysController extends Controller
         $keyId = $request->getBodyParam('keyId');
 
         $key = $keyId !== null && $keyId !== ''
-            ? $this->plugin()->getApiKeys()->getKeyById((int)$keyId)
+            ? SearchKit::instance()->getApiKeys()->getKeyById((int)$keyId)
             : new ApiKey();
 
         if ($key === null) {
@@ -80,9 +79,9 @@ class ApiKeysController extends Controller
         $key->rateLimit = $rateLimit !== '' ? (int)$rateLimit : null;
 
         $isNew = $key->id === null;
-        $plainKey = $isNew ? $this->plugin()->getApiKeys()->createKey($key) : null;
+        $plainKey = $isNew ? SearchKit::instance()->getApiKeys()->createKey($key) : null;
 
-        if ($isNew ? $plainKey === null : !$this->plugin()->getApiKeys()->saveKey($key)) {
+        if ($isNew ? $plainKey === null : !SearchKit::instance()->getApiKeys()->saveKey($key)) {
             $this->setFailFlash(Craft::t('search-kit', 'Couldn’t save API key.'));
             Craft::$app->getUrlManager()->setRouteParams(['key' => $key]);
 
@@ -105,13 +104,13 @@ class ApiKeysController extends Controller
         $this->requirePostRequest();
 
         $keyId = (int)$this->request->getRequiredBodyParam('keyId');
-        $key = $this->plugin()->getApiKeys()->getKeyById($keyId);
+        $key = SearchKit::instance()->getApiKeys()->getKeyById($keyId);
 
         if ($key === null) {
             throw new NotFoundHttpException('API key not found.');
         }
 
-        $this->plugin()->getApiKeys()->deleteKey($key);
+        SearchKit::instance()->getApiKeys()->deleteKey($key);
         $this->setSuccessFlash(Craft::t('search-kit', 'API key revoked.'));
 
         return $this->redirect('search-kit/api-keys');
@@ -129,19 +128,8 @@ class ApiKeysController extends Controller
             return [];
         }
 
-        $existing = array_map(static fn($index) => (int)$index->id, $this->plugin()->getIndexes()->getAllIndexes());
+        $existing = array_map(static fn($index) => (int)$index->id, SearchKit::instance()->getIndexes()->getAllIndexes());
 
         return array_values(array_intersect($existing, array_map('intval', $posted)));
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('Search Kit is not installed.');
-        }
-
-        return $plugin;
     }
 }

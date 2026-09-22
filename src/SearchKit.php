@@ -49,6 +49,7 @@ use Tahadudhiya\SearchKit\services\Synonyms;
 use Tahadudhiya\SearchKit\services\Terms;
 use Tahadudhiya\SearchKit\variables\SearchKitVariable;
 use yii\base\Event;
+use yii\base\InvalidConfigException;
 
 /**
  * SearchKit — search management and intelligence for Craft CMS.
@@ -97,6 +98,16 @@ class SearchKit extends Plugin
     public string $schemaVersion = '1.13.0';
     public bool $hasCpSection = true;
     public bool $hasCpSettings = false;
+
+    /**
+     * The running plugin, for the many places that reach a service through it. Null only means
+     * SearchKit is not installed, which nothing calling this can be running without.
+     */
+    public static function instance(): self
+    {
+        return self::getInstance()
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+    }
 
     public static function config(): array
     {

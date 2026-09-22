@@ -15,7 +15,6 @@ use Tahadudhiya\SearchKit\models\ApiKey;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\filters\VerbFilter;
-use yii\web\ForbiddenHttpException;
 use yii\web\Response;
 
 /**
@@ -45,13 +44,13 @@ class ApiController extends Controller
 
     public function actionSearch(): Response
     {
-        $key = $this->plugin()->getApiKeys()->authenticate($this->presentedKey());
+        $key = SearchKit::instance()->getApiKeys()->authenticate($this->presentedKey());
 
         if ($key === null) {
             return $this->error(401, 'unauthorized', 'A valid API key is required.');
         }
 
-        $rate = $this->plugin()->getApiKeys()->checkRateLimit($key);
+        $rate = SearchKit::instance()->getApiKeys()->checkRateLimit($key);
         $this->reportRate($rate);
 
         if ($rate['retryAfter'] !== null) {
@@ -60,7 +59,7 @@ class ApiController extends Controller
             return $this->error(429, 'rate_limit_exceeded', 'Too many requests. Try again shortly.');
         }
 
-        $this->plugin()->getApiKeys()->touch($key);
+        SearchKit::instance()->getApiKeys()->touch($key);
 
         return $this->runSearch($key);
     }
@@ -68,7 +67,7 @@ class ApiController extends Controller
     private function runSearch(ApiKey $key): Response
     {
         try {
-            return $this->asJson($this->plugin()->getApi()->search($key, $this->params()));
+            return $this->asJson(SearchKit::instance()->getApi()->search($key, $this->params()));
         } catch (InvalidQueryException $e) {
             return $this->error(400, 'invalid_query', $e->getMessage(), $e->getErrors());
         } catch (UnsupportedCapabilityException $e) {
@@ -144,16 +143,5 @@ class ApiController extends Controller
         }
 
         return $this->asJson(['error' => $error]);
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('Search Kit is not installed.');
-        }
-
-        return $plugin;
     }
 }

@@ -62,11 +62,6 @@ class ParsedQuery extends Model
         $this->_terms = array_values($terms);
     }
 
-    public function addTerm(QueryTerm $term): void
-    {
-        $this->_terms[] = $term;
-    }
-
     /**
      * The terms a result has to match.
      *

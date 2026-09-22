@@ -455,17 +455,7 @@ class CraftProvider extends SearchProvider
      */
     public function indexDocument(SearchIndex $index, SearchDocument $document): void
     {
-        if (!$index->coversSite($document->siteId)) {
-            throw new ProviderException("The “{$index->handle}” search index does not cover this element's site.");
-        }
-
-        if ($document->isEmpty()) {
-            Craft::error(
-                "The “{$index->handle}” search index has no enabled searchable fields for {$document->elementType}",
-                SearchKit::LOG_CATEGORY,
-            );
-            throw new ProviderException("The “{$index->handle}” search index is not configured for this element type.");
-        }
+        $this->assertDocumentIsIndexable($index, $document);
 
         // Craft's search service indexes an element, not a document, so this provider needs the
         // element the document was built from. The document still decides whether it is indexed.
@@ -551,26 +541,6 @@ class CraftProvider extends SearchProvider
             $indexed,
             static fn(string $type) => in_array($type, $wanted, true) !== $excluded,
         ));
-    }
-
-    /**
-     * Accepts a class name or Craft's own reference handle, so templates need not name classes.
-     *
-     * @param string[] $indexed
-     */
-    private function resolveElementType(string $value, array $indexed): string
-    {
-        foreach ($indexed as $elementType) {
-            /** @var class-string<ElementInterface> $elementType */
-            if ($value === $elementType || $value === $elementType::refHandle()) {
-                return $elementType;
-            }
-        }
-
-        throw new InvalidQueryException(
-            "“{$value}” is not an element type this search index covers.",
-            ['filters' => ["“{$value}” is not an element type this search index covers."]],
-        );
     }
 
     /**

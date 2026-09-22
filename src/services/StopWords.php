@@ -5,7 +5,6 @@ namespace Tahadudhiya\SearchKit\services;
 use Tahadudhiya\SearchKit\models\SearchSettings;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Drops words too common to narrow a search down. The list is deliberately short: a word that only
@@ -114,7 +113,6 @@ class StopWords extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= SearchKit::getInstance()?->getNormalization()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 }

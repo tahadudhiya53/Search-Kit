@@ -2,7 +2,6 @@
 
 namespace Tahadudhiya\SearchKit\services;
 
-use craft\base\ElementInterface;
 use Tahadudhiya\SearchKit\errors\IndexNotFoundException;
 use Tahadudhiya\SearchKit\errors\InvalidQueryException;
 use Tahadudhiya\SearchKit\models\ApiKey;
@@ -12,7 +11,6 @@ use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * What the REST API makes of a search: it vets what a client asked for, runs it through the same
@@ -33,7 +31,7 @@ class Api extends Component
     public function search(ApiKey $key, array $params): array
     {
         $handle = $this->handle($params);
-        $index = $this->plugin()->getSearch()->resolveIndex($handle);
+        $index = SearchKit::instance()->getSearch()->resolveIndex($handle);
 
         // An index this key may not search is reported as though it were not there, so a key can
         // never be used to find out which indexes exist.
@@ -43,7 +41,7 @@ class Api extends Component
 
         $query = SearchQuery::create($handle, $this->text($params), $this->searchParams($params));
 
-        return $this->present($this->plugin()->getSearch()->search($query));
+        return $this->present(SearchKit::instance()->getSearch()->search($query));
     }
 
     /**
@@ -166,7 +164,7 @@ class Api extends Component
         return [
             'elementId' => $hit->elementId,
             'siteId' => $hit->siteId,
-            'elementType' => $this->elementType($hit),
+            'elementType' => $hit->getElementTypeHandle(),
             'title' => $hit->element?->getUiLabel(),
             'url' => $hit->element?->getUrl(),
             'score' => $hit->score,
@@ -178,26 +176,5 @@ class Api extends Component
             'snippets' => $hit->snippets,
             'highlights' => $hit->highlights,
         ];
-    }
-
-    /**
-     * The same vocabulary a filter uses — `entry`, `category`, `asset`, `user` — rather than a
-     * class name, so what comes back can be asked for again.
-     */
-    private function elementType(SearchHit $hit): ?string
-    {
-        $elementType = $hit->elementType;
-
-        if ($elementType === null || !is_subclass_of($elementType, ElementInterface::class)) {
-            return $elementType;
-        }
-
-        return $elementType::refHandle() ?? $elementType;
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 }

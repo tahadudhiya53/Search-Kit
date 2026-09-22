@@ -14,7 +14,6 @@ use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\models\SearchSettings;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Turns what a user typed into terms a provider can run: operators, normalization, tokenization,
@@ -406,7 +405,7 @@ class QueryPipeline extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 
     public function setStopWords(StopWords $stopWords): void
@@ -416,7 +415,7 @@ class QueryPipeline extends Component
 
     public function getStopWords(): StopWords
     {
-        return $this->_stopWords ??= $this->plugin()->getStopWords();
+        return $this->_stopWords ??= SearchKit::instance()->getStopWords();
     }
 
     public function setSynonyms(Synonyms $synonyms): void
@@ -426,12 +425,6 @@ class QueryPipeline extends Component
 
     public function getSynonyms(): Synonyms
     {
-        return $this->_synonyms ??= $this->plugin()->getSynonyms();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_synonyms ??= SearchKit::instance()->getSynonyms();
     }
 }

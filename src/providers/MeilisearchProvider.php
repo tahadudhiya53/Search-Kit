@@ -3,7 +3,6 @@
 namespace Tahadudhiya\SearchKit\providers;
 
 use Craft;
-use craft\base\ElementInterface;
 use craft\helpers\App;
 use craft\helpers\Html;
 use craft\helpers\Json;
@@ -320,13 +319,7 @@ class MeilisearchProvider extends SearchProvider
 
     public function indexDocument(SearchIndex $index, SearchDocument $document): void
     {
-        if (!$index->coversSite($document->siteId)) {
-            throw new ProviderException("The “{$index->handle}” search index does not cover this element's site.");
-        }
-
-        if ($document->isEmpty()) {
-            throw new ProviderException("The “{$index->handle}” search index is not configured for this element type.");
-        }
+        $this->assertDocumentIsIndexable($index, $document);
 
         $this->ensureIndex($index);
         $client = $this->getClient();
@@ -727,26 +720,6 @@ class MeilisearchProvider extends SearchProvider
         }
 
         return Json::encode((string)$value);
-    }
-
-    /**
-     * Accepts a class name or Craft's own reference handle, so templates need not name classes.
-     *
-     * @param string[] $elementTypes
-     */
-    private function resolveElementType(string $value, array $elementTypes): string
-    {
-        foreach ($elementTypes as $elementType) {
-            /** @var class-string<ElementInterface> $elementType */
-            if ($value === $elementType || $value === $elementType::refHandle()) {
-                return $elementType;
-            }
-        }
-
-        throw new InvalidQueryException(
-            "“{$value}” is not an element type this search index covers.",
-            ['filters' => ["“{$value}” is not an element type this search index covers."]],
-        );
     }
 
     /**

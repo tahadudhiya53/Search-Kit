@@ -84,6 +84,19 @@ class SearchHit extends Model
     }
 
     /**
+     * The element type in the same vocabulary a filter uses — `entry`, `category`, `asset`, `user`
+     * — rather than a class name, so what an API hands back can be asked for again.
+     */
+    public function getElementTypeHandle(): ?string
+    {
+        if ($this->elementType === null || !is_subclass_of($this->elementType, ElementInterface::class)) {
+            return $this->elementType;
+        }
+
+        return $this->elementType::refHandle() ?? $this->elementType;
+    }
+
+    /**
      * @param array<string,string> $values
      */
     private function pick(array $values, ?string $field): ?string

@@ -13,7 +13,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\models\SearchRule;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Turns the rules governing a query into changes to its results. Nothing here knows what served the
@@ -281,16 +280,9 @@ class RuleEngine extends Component
                 continue;
             }
 
-            $target = $this->target($action, $rule, $index, $evaluation, $scope);
+            $target = $this->unclaimedTarget($action, $rule, $index, $evaluation, $plan, $scope);
 
             if ($target === null) {
-                continue;
-            }
-
-            $claim = $plan->claimedBy($target['elementId'], $target['siteId']);
-
-            if ($claim !== null) {
-                $this->record($evaluation, $action, false, "claimedBy:{$claim['action']}:{$claim['ruleId']}");
                 continue;
             }
 
@@ -318,17 +310,9 @@ class RuleEngine extends Component
                 continue;
             }
 
-            $target = $this->target($action, $rule, $index, $evaluation, $scope);
+            $target = $this->unclaimedTarget($action, $rule, $index, $evaluation, $plan, $scope);
 
             if ($target === null) {
-                continue;
-            }
-
-            $claim = $plan->claimedBy($target['elementId'], $target['siteId']);
-
-            // A result that was removed or placed is not ranked by its score any more.
-            if ($claim !== null) {
-                $this->record($evaluation, $action, false, "claimedBy:{$claim['action']}:{$claim['ruleId']}");
                 continue;
             }
 
@@ -346,6 +330,39 @@ class RuleEngine extends Component
 
             $this->record($evaluation, $action, true, 'applied');
         }
+    }
+
+    /**
+     * The result an action acts on, or null when it names none in scope or an earlier rule already
+     * claimed it. The first claim on a result stands — a hidden, pinned or promoted result is no
+     * longer ranked by its score, so nothing later may move it either.
+     *
+     * @param int[]|null $scope The sites this search covers, or null for every site there is.
+     * @return array{elementId:int,elementType:string,siteId:int|null}|null
+     */
+    private function unclaimedTarget(
+        RuleAction $action,
+        SearchRule $rule,
+        SearchIndex $index,
+        RuleEvaluation $evaluation,
+        RulePlan $plan,
+        ?array $scope,
+    ): ?array {
+        $target = $this->target($action, $rule, $index, $evaluation, $scope);
+
+        if ($target === null) {
+            return null;
+        }
+
+        $claim = $plan->claimedBy($target['elementId'], $target['siteId']);
+
+        if ($claim !== null) {
+            $this->record($evaluation, $action, false, "claimedBy:{$claim['action']}:{$claim['ruleId']}");
+
+            return null;
+        }
+
+        return $target;
     }
 
     /**
@@ -759,7 +776,7 @@ class RuleEngine extends Component
 
     public function getRules(): Rules
     {
-        return $this->_rules ??= $this->plugin()->getRules();
+        return $this->_rules ??= SearchKit::instance()->getRules();
     }
 
     public function setNormalization(Normalization $normalization): void
@@ -769,12 +786,6 @@ class RuleEngine extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 }

@@ -213,13 +213,7 @@ class Insights extends Component
             ->limit($criteria->limit)
             ->all());
 
-        $results = array_map(static fn(array $row) => new ClickedResult([
-            'elementId' => (int)$row['elementId'],
-            'elementType' => (string)$row['elementType'],
-            'siteId' => (int)$row['clickSiteId'],
-            'clicks' => (int)$row['clicks'],
-            'averagePosition' => round((float)$row['averagePosition'], 2),
-        ]), $rows);
+        $results = array_map(static fn(array $row) => ClickedResult::fromRow($row), $rows);
 
         $this->nameResults($results);
 

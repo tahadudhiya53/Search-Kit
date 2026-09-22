@@ -3,21 +3,20 @@
 namespace Tahadudhiya\SearchKit\controllers;
 
 use Craft;
-use craft\web\Controller;
+use Tahadudhiya\SearchKit\base\InsightsController;
 use Tahadudhiya\SearchKit\enums\SearchIntent;
 use Tahadudhiya\SearchKit\models\InsightsCriteria;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\SearchKit;
 use Tahadudhiya\SearchKit\services\Intelligence;
 use Throwable;
-use yii\web\ForbiddenHttpException;
 use yii\web\Response;
 
 /**
  * What the recorded searches suggest somebody should do. It reads activity that was already
  * recorded and never runs a search, so opening this page changes nothing about search.
  */
-class IntelligenceController extends Controller
+class IntelligenceController extends InsightsController
 {
     /** @var int Rows each reading on the page shows. */
     private const ROWS = 10;
@@ -35,30 +34,17 @@ class IntelligenceController extends Controller
 
     public function actionIndex(): Response
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $criteria = InsightsCriteria::fromRequest($this->request->getQueryParams());
         $criteria->limit = self::ROWS;
 
-        $indexes = $plugin->getIndexes()->getAllIndexes();
         $index = $criteria->indexId !== null ? $plugin->getIndexes()->getIndexById($criteria->indexId) : null;
-
-        $indexNames = [];
-
-        foreach ($indexes as $one) {
-            $indexNames[(int)$one->id] = $one->name;
-        }
-
-        $siteNames = [];
-
-        foreach (Craft::$app->getSites()->getAllSites(true) as $site) {
-            $siteNames[(int)$site->id] = $site->name;
-        }
 
         return $this->renderTemplate('search-kit/intelligence/_index', array_merge([
             'criteria' => $criteria,
             'index' => $index,
-            'indexNames' => $indexNames,
-            'siteNames' => $siteNames,
+            'indexNames' => $this->indexNames(),
+            'siteNames' => $this->siteNames(),
             'intentLabels' => $this->intentLabels(),
             'windowDays' => Intelligence::WINDOW_DAYS,
         ], $this->readings($criteria, $index)));
@@ -72,7 +58,7 @@ class IntelligenceController extends Controller
      */
     private function readings(InsightsCriteria $criteria, ?SearchIndex $index): array
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
 
         try {
             return [
@@ -109,16 +95,5 @@ class IntelligenceController extends Controller
         }
 
         return $labels;
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('Search Kit is not installed.');
-        }
-
-        return $plugin;
     }
 }

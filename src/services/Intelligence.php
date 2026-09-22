@@ -16,7 +16,6 @@ use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SynonymCandidate;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 use yii\caching\TagDependency;
 use yii\db\Expression;
 
@@ -461,14 +460,7 @@ class Intelligence extends Component
                 ->all(),
         );
 
-        $results = array_map(static fn(array $row) => new ClickedResult([
-            'query' => (string)$row['normalizedQuery'],
-            'elementId' => (int)$row['elementId'],
-            'elementType' => (string)$row['elementType'],
-            'siteId' => (int)$row['clickSiteId'],
-            'clicks' => (int)$row['clicks'],
-            'averagePosition' => round((float)$row['averagePosition'], 2),
-        ]), $rows);
+        $results = array_map(static fn(array $row) => ClickedResult::fromRow($row), $rows);
 
         // Named where the reading is, so a recommendation about a result can say which result.
         $this->getInsights()->nameResults($results);
@@ -671,7 +663,7 @@ class Intelligence extends Component
 
     public function getInsights(): Insights
     {
-        return $this->_insights ??= $this->plugin()->getInsights();
+        return $this->_insights ??= SearchKit::instance()->getInsights();
     }
 
     public function setIndexes(Indexes $indexes): void
@@ -681,7 +673,7 @@ class Intelligence extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= $this->plugin()->getIndexes();
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 
     public function setSynonyms(Synonyms $synonyms): void
@@ -691,7 +683,7 @@ class Intelligence extends Component
 
     public function getSynonyms(): Synonyms
     {
-        return $this->_synonyms ??= $this->plugin()->getSynonyms();
+        return $this->_synonyms ??= SearchKit::instance()->getSynonyms();
     }
 
     public function setIntent(Intent $intent): void
@@ -701,7 +693,7 @@ class Intelligence extends Component
 
     public function getIntent(): Intent
     {
-        return $this->_intent ??= $this->plugin()->getIntent();
+        return $this->_intent ??= SearchKit::instance()->getIntent();
     }
 
     public function setNormalization(Normalization $normalization): void
@@ -711,12 +703,6 @@ class Intelligence extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 }

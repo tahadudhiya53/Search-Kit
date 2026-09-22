@@ -20,7 +20,6 @@ use Tahadudhiya\SearchKit\records\SearchRuleRecord;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * The administrator-managed search rules. Every search reads these, so they are cached rather than
@@ -410,22 +409,16 @@ class Rules extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 
     private function getIndexes(): Indexes
     {
-        return $this->plugin()->getIndexes();
+        return SearchKit::instance()->getIndexes();
     }
 
     private function getSearchableFields(): SearchableFields
     {
-        return $this->plugin()->getSearchableFields();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return SearchKit::instance()->getSearchableFields();
     }
 }

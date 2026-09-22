@@ -5,7 +5,6 @@ namespace Tahadudhiya\SearchKit\variables;
 use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
-use yii\base\InvalidConfigException;
 
 /**
  * `craft.searchKit` — everything a template may do with SearchKit. It exposes SearchKit's own query
@@ -23,7 +22,7 @@ class SearchKitVariable
     {
         $query = $index instanceof SearchQuery ? $index : $this->query($index, $text, $params);
 
-        return $this->plugin()->getSearch()->search($query);
+        return SearchKit::instance()->getSearch()->search($query);
     }
 
     /**
@@ -36,7 +35,7 @@ class SearchKitVariable
     {
         $query = $this->query($index, $text, $params);
 
-        return $this->plugin()->getSearch()->autocomplete($query, $this->suggestionLimit($query, $params));
+        return SearchKit::instance()->getSearch()->autocomplete($query, $this->suggestionLimit($query, $params));
     }
 
     /**
@@ -49,7 +48,7 @@ class SearchKitVariable
     {
         $query = $this->query($index, $text, $params);
 
-        return $this->plugin()->getSearch()->suggest($query, $this->suggestionLimit($query, $params));
+        return SearchKit::instance()->getSearch()->suggest($query, $this->suggestionLimit($query, $params));
     }
 
     /**
@@ -70,11 +69,5 @@ class SearchKitVariable
     public function query(string $index, string $text, array $params = []): SearchQuery
     {
         return SearchQuery::create($index, $text, $params);
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 }

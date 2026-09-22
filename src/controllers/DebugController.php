@@ -8,7 +8,6 @@ use Tahadudhiya\SearchKit\errors\SearchKitException;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\SearchKit;
-use yii\web\ForbiddenHttpException;
 use yii\web\Response;
 
 /**
@@ -33,7 +32,7 @@ class DebugController extends Controller
 
     public function actionIndex(): Response
     {
-        $indexes = $this->plugin()->getIndexes()->getAllIndexes();
+        $indexes = SearchKit::instance()->getIndexes()->getAllIndexes();
         $handle = (string)$this->request->getQueryParam('index', $indexes[0]->handle ?? '');
         $text = trim((string)$this->request->getQueryParam('q', ''));
 
@@ -42,7 +41,7 @@ class DebugController extends Controller
 
         if ($handle !== '' && $text !== '') {
             try {
-                $result = $this->plugin()->getDebugger()->run($this->query($handle, $text));
+                $result = SearchKit::instance()->getDebugger()->run($this->query($handle, $text));
             } catch (SearchKitException $e) {
                 $error = $e->getMessage();
             }
@@ -109,16 +108,5 @@ class DebugController extends Controller
         }
 
         return null;
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('Search Kit is not installed.');
-        }
-
-        return $plugin;
     }
 }

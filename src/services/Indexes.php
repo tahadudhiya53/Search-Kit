@@ -15,7 +15,6 @@ use Tahadudhiya\SearchKit\records\SearchIndexRecord;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 use yii\db\Expression;
 
 /**
@@ -230,8 +229,7 @@ class Indexes extends Component
 
     public function getSearchableFields(): SearchableFields
     {
-        return $this->_searchableFields ??= SearchKit::getInstance()?->getSearchableFields()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_searchableFields ??= SearchKit::instance()->getSearchableFields();
     }
 
     public function setProviders(Providers $providers): void
@@ -241,8 +239,7 @@ class Indexes extends Component
 
     public function getProviders(): Providers
     {
-        return $this->_providers ??= SearchKit::getInstance()?->getProviders()
-            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
+        return $this->_providers ??= SearchKit::instance()->getProviders();
     }
 
     public function deleteIndex(SearchIndex $index): bool

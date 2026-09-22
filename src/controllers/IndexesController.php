@@ -15,7 +15,6 @@ use Tahadudhiya\SearchKit\models\SearchSettings;
 use Tahadudhiya\SearchKit\providers\CraftProvider;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Model;
-use yii\web\ForbiddenHttpException;
 use yii\web\NotFoundHttpException;
 use yii\web\Response;
 
@@ -37,7 +36,7 @@ class IndexesController extends Controller
 
     public function actionIndex(): Response
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $indexes = $plugin->getIndexes()->getAllIndexes();
         $statuses = [];
 
@@ -55,7 +54,7 @@ class IndexesController extends Controller
 
     public function actionEdit(?int $indexId = null, ?SearchIndex $index = null): Response
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $index ??= $indexId !== null
             ? $plugin->getIndexes()->getIndexById($indexId)
             : new SearchIndex(['provider' => CraftProvider::class]);
@@ -99,7 +98,7 @@ class IndexesController extends Controller
         $this->requirePostRequest();
         $this->requirePermission(SearchKit::PERMISSION_MANAGE);
 
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $request = $this->request;
         $indexId = $request->getBodyParam('indexId');
 
@@ -148,7 +147,7 @@ class IndexesController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_MANAGE);
 
         $index = $this->requireIndex();
-        $this->plugin()->getIndexes()->deleteIndex($index);
+        SearchKit::instance()->getIndexes()->deleteIndex($index);
         $this->setSuccessFlash(Craft::t('search-kit', 'Search index deleted.'));
 
         return $this->redirect('search-kit/indexes');
@@ -160,7 +159,7 @@ class IndexesController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_REBUILD);
 
         $index = $this->requireIndex();
-        $this->plugin()->getIndexing()->queueRebuild($index);
+        SearchKit::instance()->getIndexing()->queueRebuild($index);
         $this->setSuccessFlash(Craft::t('search-kit', 'Rebuild queued.'));
 
         return $this->redirectToPostedUrl();
@@ -172,7 +171,7 @@ class IndexesController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_REBUILD);
 
         $index = $this->requireIndex();
-        $reset = $this->plugin()->getIndexing()->retryFailed($index);
+        $reset = SearchKit::instance()->getIndexing()->retryFailed($index);
         $this->setSuccessFlash(Craft::t('search-kit', '{count} operations queued for retry.', ['count' => $reset]));
 
         return $this->redirectToPostedUrl();
@@ -188,7 +187,7 @@ class IndexesController extends Controller
     {
         $capabilities = [];
 
-        foreach ($this->plugin()->getProviders()->getAllProviderTypes() as $providerType) {
+        foreach (SearchKit::instance()->getProviders()->getAllProviderTypes() as $providerType) {
             /** @var class-string<SearchProviderInterface> $providerType */
             $capabilities[$providerType] = array_map(
                 static fn(ProviderCapability $capability) => $capability->label(),
@@ -207,7 +206,7 @@ class IndexesController extends Controller
                 'label' => $providerType::displayName(),
                 'value' => $providerType,
             ],
-            $this->plugin()->getProviders()->getAllProviderTypes(),
+            SearchKit::instance()->getProviders()->getAllProviderTypes(),
         );
     }
 
@@ -222,10 +221,10 @@ class IndexesController extends Controller
         $view = Craft::$app->getView();
         $forms = [];
 
-        foreach ($this->plugin()->getProviders()->getAllProviderTypes() as $i => $providerType) {
+        foreach (SearchKit::instance()->getProviders()->getAllProviderTypes() as $i => $providerType) {
             // The chosen provider is built with what is saved, so the form shows the real settings.
             $chosen = $providerType === $index->provider;
-            $provider = $this->plugin()->getProviders()->createProviderOfType($providerType, $chosen ? $index->settings : []);
+            $provider = SearchKit::instance()->getProviders()->createProviderOfType($providerType, $chosen ? $index->settings : []);
 
             // A save that failed comes back through here, so the provider re-reports which of its
             // own settings were wrong rather than only the index saying that something was.
@@ -261,7 +260,7 @@ class IndexesController extends Controller
             return [];
         }
 
-        $offered = $this->plugin()->getProviders()->getAllProviderTypes();
+        $offered = SearchKit::instance()->getProviders()->getAllProviderTypes();
 
         foreach ($postedTypes as $group => $type) {
             if ($type !== $provider || !in_array($type, $offered, true)) {
@@ -276,7 +275,7 @@ class IndexesController extends Controller
 
             // Only what the provider declares as a setting, so nothing posted can reach it as an
             // arbitrary property.
-            $allowed = array_flip($this->plugin()->getProviders()->createProviderOfType($type)->settingsAttributes());
+            $allowed = array_flip(SearchKit::instance()->getProviders()->createProviderOfType($type)->settingsAttributes());
 
             return array_filter(
                 array_intersect_key($posted, $allowed),
@@ -339,7 +338,7 @@ class IndexesController extends Controller
             return [];
         }
 
-        $indexable = $this->plugin()->getSearchableFields()->getIndexableElementTypes();
+        $indexable = SearchKit::instance()->getSearchableFields()->getIndexableElementTypes();
         $fields = [];
 
         foreach ($postedTypes as $group => $elementType) {
@@ -385,7 +384,7 @@ class IndexesController extends Controller
     private function requireIndex(): SearchIndex
     {
         $indexId = (int)$this->request->getRequiredBodyParam('indexId');
-        $index = $this->plugin()->getIndexes()->getIndexById($indexId);
+        $index = SearchKit::instance()->getIndexes()->getIndexById($indexId);
 
         if ($index === null) {
             throw new NotFoundHttpException('Search index not found.');
@@ -402,16 +401,5 @@ class IndexesController extends Controller
     private function canRebuild(): bool
     {
         return Craft::$app->getUser()->checkPermission(SearchKit::PERMISSION_REBUILD);
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('Search Kit is not installed.');
-        }
-
-        return $plugin;
     }
 }

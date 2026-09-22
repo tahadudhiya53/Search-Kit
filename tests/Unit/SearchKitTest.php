@@ -6,10 +6,6 @@ use craft\base\Plugin;
 use craft\db\Migration;
 use PHPUnit\Framework\TestCase;
 use Tahadudhiya\SearchKit\SearchKit;
-use Tahadudhiya\SearchKit\services\Indexes;
-use Tahadudhiya\SearchKit\services\Providers;
-use Tahadudhiya\SearchKit\services\Search;
-use Tahadudhiya\SearchKit\services\SearchableFields;
 
 /**
  * Covers what Craft reads from the plugin itself: autoloading, metadata, and the components it
@@ -54,13 +50,55 @@ class SearchKitTest extends TestCase
         self::assertTrue(is_subclass_of(self::INSTALL_MIGRATION_CLASS, Migration::class));
     }
 
-    public function testServiceComponentsAreRegistered(): void
+    /**
+     * Every registered service has to be reachable, or a caller finds out at runtime that the one
+     * it wants was never given an accessor.
+     */
+    public function testEveryRegisteredComponentIsAResolvableServiceWithAnAccessor(): void
     {
-        $components = SearchKit::config()['components'];
+        $plugin = new \ReflectionClass(SearchKit::class);
 
-        self::assertSame(Indexes::class, $components['indexes']['class']);
-        self::assertSame(Providers::class, $components['providers']['class']);
-        self::assertSame(Search::class, $components['search']['class']);
-        self::assertSame(SearchableFields::class, $components['searchableFields']['class']);
+        foreach (SearchKit::config()['components'] as $name => $component) {
+            $class = $component['class'];
+
+            self::assertTrue(class_exists($class), "{$name} names a class that does not exist.");
+            self::assertTrue(
+                $plugin->hasMethod('get' . ucfirst($name)),
+                "{$name} is registered but has no get" . ucfirst($name) . '() accessor.',
+            );
+            self::assertSame(
+                $class,
+                (string)$plugin->getMethod('get' . ucfirst($name))->getReturnType(),
+                "get{$name}() does not return what {$name} is registered as.",
+            );
+        }
+    }
+
+    /**
+     * The accessors and the registration are two lists of the same services, so neither may carry
+     * a service the other does not.
+     */
+    public function testEveryServiceAccessorHasARegisteredComponent(): void
+    {
+        $registered = array_keys(SearchKit::config()['components']);
+        $accessors = [];
+
+        foreach ((new \ReflectionClass(SearchKit::class))->getMethods() as $method) {
+            $type = (string)$method->getReturnType();
+
+            if ($method->getDeclaringClass()->getName() !== SearchKit::class
+                || !str_starts_with($method->getName(), 'get')
+                || $method->getNumberOfParameters() > 0
+                || !str_starts_with($type, 'Tahadudhiya\\SearchKit\\services\\')) {
+                continue;
+            }
+
+            $accessors[] = lcfirst(substr($method->getName(), 3));
+        }
+
+        sort($registered);
+        sort($accessors);
+
+        self::assertSame($registered, $accessors);
     }
 }
