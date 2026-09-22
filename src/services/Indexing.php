@@ -39,7 +39,7 @@ class Indexing extends Component
     public const BATCH_SIZE = 100;
 
     /** @var string Shown instead of an unexpected exception, whose detail belongs in the log. */
-    private const OPAQUE_FAILURE = 'The search provider failed. The cause is in the SearchKit log.';
+    private const OPAQUE_FAILURE = 'The search provider failed. The cause is in the Search Kit log.';
 
     private ?Indexes $_indexes = null;
     private ?SearchableFields $_searchableFields = null;
@@ -657,7 +657,7 @@ class Indexing extends Component
         $plugin = SearchKit::getInstance();
 
         if ($plugin === null) {
-            throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            throw new InvalidConfigException('Search Kit is not installed or is disabled.');
         }
 
         return $plugin;

@@ -38,7 +38,7 @@ class SearchKitTest extends TestCase
         self::assertSame('craft-plugin', $composer['type']);
         self::assertSame(SearchKit::class, $composer['extra']['class']);
         self::assertSame('search-kit', $composer['extra']['handle']);
-        self::assertSame('SearchKit', $composer['extra']['name']);
+        self::assertSame('Search Kit', $composer['extra']['name']);
     }
 
     public function testSchemaVersionIsDeclared(): void

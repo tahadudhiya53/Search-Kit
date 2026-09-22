@@ -115,6 +115,6 @@ class StopWords extends Component
     public function getNormalization(): Normalization
     {
         return $this->_normalization ??= SearchKit::getInstance()?->getNormalization()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 }

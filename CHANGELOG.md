@@ -1,4 +1,4 @@
-# Release Notes for SearchKit
+# Release Notes for Search Kit
 
 ## 1.0.0
 
@@ -111,7 +111,7 @@
   the last document using it stops using it and survives while any other still does. Updates,
   deletions, restores and rebuilds all keep it in step, and indexing that failed changes nothing.
 - Suggestions describe published content only. Before a word is completed, corrected to or offered,
-  SearchKit checks that a document anybody may find still uses it, so nothing from a draft, a
+  Search Kit checks that a document anybody may find still uses it, so nothing from a draft, a
   disabled entry, one not yet posted, one expired or one deleted can be suggested to anyone. Every
   document using a word is checked until one proves it may be shown, and completions and corrections
   are read a batch at a time until enough of them may be shown, so no suggestion is lost to a fixed
@@ -202,7 +202,7 @@
   totals for what is shown and a way to forget every search recorded for an index or for all of
   them, governed by permissions of their own so measurement can be delegated without handing over
   index configuration.
-- A control panel dashboard, which the SearchKit section itself opens: the totals for a period as
+- A control panel dashboard, which the Search Kit section itself opens: the totals for a period as
   cards, search activity and response time over it as charts, and compact tables of what was
   searched for most, what returned nothing, what was opened most, what nothing ever came of, and
   what ran slowest — alongside the state of every
@@ -250,7 +250,7 @@
   every call made to the provider with the window it asked for and what came back, the time each
   stage took, every rule considered and what each of its actions did, and for each result what it
   matched on, the provider's own score, what the rules moved it by and what it was ranked by.
-  What SearchKit kept out is listed with the reason: the rule that removed it before the search ran,
+  What Search Kit kept out is listed with the reason: the rule that removed it before the search ran,
   or that a result found could not be shown in the site and status asked for. What was typed is
   always kept beside what a correction searched for instead, a result a rule placed is explained as
   placed rather than scored, and a provider is asked which of its diagnostics may be shown rather
@@ -275,7 +275,7 @@
   does not allow cannot be searched, and a search covering every site is refused unless the schema
   allows every site. A hit names its element and how it ranked, leaving the content behind it to
   Craft's own element queries, where the schema decides which fields may be read.
-- Optional Craft Commerce support, as an integration rather than a dependency. SearchKit's core
+- Optional Craft Commerce support, as an integration rather than a dependency. Search Kit's core
   names no Commerce class — the two class names in the codebase are strings inside one service — so
   nothing can autoload Commerce that is not installed, and without the Commerce plugin that service
   registers nothing at all. Where Commerce is installed, products and variants become indexable
@@ -306,7 +306,7 @@
   result set rather than the page it returned. Counting is a provider capability — a provider that
   cannot count is refused rather than answered with nothing. The Craft provider counts by the kind
   of element, by site, and by any column the element type's own table holds, read from the search
-  Craft itself prepared rather than from a list kept in SearchKit; Meilisearch counts by its own
+  Craft itself prepared rather than from a list kept in Search Kit; Meilisearch counts by its own
   attributes. Counts are exposed to Twig, PHP, REST and GraphQL.
 - Range filters, through a `between` operator taking a lowest and a highest value and including
   both. Both providers express it in their own dialect, so a price range works on either.

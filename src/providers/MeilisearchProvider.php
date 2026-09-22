@@ -821,7 +821,7 @@ class MeilisearchProvider extends SearchProvider
 
         foreach ((array)$response['hits'] as $document) {
             if (!is_array($document) || !isset($document[self::ATTRIBUTE_ELEMENT_ID])) {
-                throw new ProviderException('Meilisearch returned a result SearchKit cannot identify.');
+                throw new ProviderException('Meilisearch returned a result Search Kit cannot identify.');
             }
 
             $hit = new SearchHit([

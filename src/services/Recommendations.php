@@ -180,6 +180,6 @@ class Recommendations extends Component
     public function getIntelligence(): Intelligence
     {
         return $this->_intelligence ??= SearchKit::getInstance()?->getIntelligence()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 }

@@ -140,7 +140,7 @@ class SynonymsController extends Controller
         $plugin = SearchKit::getInstance();
 
         if ($plugin === null) {
-            throw new ForbiddenHttpException('SearchKit is not installed.');
+            throw new ForbiddenHttpException('Search Kit is not installed.');
         }
 
         return $plugin;

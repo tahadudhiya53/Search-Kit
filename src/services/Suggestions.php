@@ -532,6 +532,6 @@ class Suggestions extends Component
     private function plugin(): SearchKit
     {
         return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 }

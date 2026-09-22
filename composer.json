@@ -29,7 +29,7 @@
         "craftcms/cms": "^5.0.0"
     },
     "suggest": {
-        "craftcms/commerce": "Adds products and variants to SearchKit's indexes, filters and merchandising rules. Optional — SearchKit runs fully without it."
+        "craftcms/commerce": "Adds products and variants to Search Kit's indexes, filters and merchandising rules. Optional — Search Kit runs fully without it."
     },
     "require-dev": {
         "craftcms/commerce": "^5.7",
@@ -51,7 +51,7 @@
     "extra": {
         "class": "Tahadudhiya\\SearchKit\\SearchKit",
         "handle": "search-kit",
-        "name": "SearchKit",
+        "name": "Search Kit",
         "developer": "Taha Dudhiya",
         "documentationUrl": "https://github.com/tahadudhiya53/Search-Kit#readme",
         "changelogUrl": "https://raw.githubusercontent.com/tahadudhiya53/Search-Kit/main/CHANGELOG.md"

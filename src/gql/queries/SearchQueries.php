@@ -30,7 +30,7 @@ class SearchQueries extends Query
                 'type' => SearchResultType::getType(),
                 'args' => self::getArguments(),
                 'resolve' => SearchResolver::class . '::resolve',
-                'description' => 'Runs a SearchKit search and returns its results.',
+                'description' => 'Runs a Search Kit search and returns its results.',
             ],
         ];
     }

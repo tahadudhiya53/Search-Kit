@@ -160,7 +160,7 @@ class SearchKit extends Plugin
             return null;
         }
 
-        $item['label'] = Craft::t('search-kit', 'SearchKit');
+        $item['label'] = Craft::t('search-kit', 'Search Kit');
 
         // The section itself opens the dashboard, so it is not a subnav item of its own. Without
         // permission to see it, the section opens the indexes instead.
@@ -309,7 +309,7 @@ class SearchKit extends Plugin
             }
 
             if ($components !== []) {
-                $event->queries[Craft::t('search-kit', 'SearchKit')] = $components;
+                $event->queries[Craft::t('search-kit', 'Search Kit')] = $components;
             }
         });
     }
@@ -318,7 +318,7 @@ class SearchKit extends Plugin
     {
         Event::on(UserPermissions::class, UserPermissions::EVENT_REGISTER_PERMISSIONS, function(RegisterUserPermissionsEvent $event) {
             $event->permissions[] = [
-                'heading' => 'SearchKit',
+                'heading' => 'Search Kit',
                 'permissions' => [
                     self::PERMISSION_VIEW => [
                         'label' => Craft::t('search-kit', 'View search indexes'),

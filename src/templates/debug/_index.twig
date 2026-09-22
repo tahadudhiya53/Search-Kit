@@ -486,11 +486,11 @@
         </div>
 
         <div class="pane">
-            <h2>{{ "SearchKit exclusions"|t('search-kit') }}</h2>
-            <p class="light">{{ "What SearchKit itself kept out of this search. A rule's target is listed because the rule removed it, not because this query would have matched it. Content the provider simply did not match is not listed here."|t('search-kit') }}</p>
+            <h2>{{ "Search Kit exclusions"|t('search-kit') }}</h2>
+            <p class="light">{{ "What Search Kit itself kept out of this search. A rule's target is listed because the rule removed it, not because this query would have matched it. Content the provider simply did not match is not listed here."|t('search-kit') }}</p>
 
             {% if debug.exclusions is empty %}
-                <p class="zilch">{{ "SearchKit kept nothing out of this search."|t('search-kit') }}</p>
+                <p class="zilch">{{ "Search Kit kept nothing out of this search."|t('search-kit') }}</p>
             {% else %}
                 <table class="data fullwidth">
                     <thead>

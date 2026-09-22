@@ -23,7 +23,7 @@ class SearchResultType extends ObjectType
     {
         return GqlEntityRegistry::getOrCreate(self::getName(), fn() => new self([
             'name' => self::getName(),
-            'description' => 'The result of a SearchKit search.',
+            'description' => 'The result of a Search Kit search.',
             'fields' => self::getFieldDefinitions(...),
         ]));
     }

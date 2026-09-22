@@ -4,7 +4,7 @@
 {% set title = isNew ? "New search index"|t('search-kit') : index.name %}
 {% set fullPageForm = canManage %}
 {% set selectedSubnavItem = 'indexes' %}
-{% set crumbs = [{ label: "SearchKit"|t('search-kit'), url: url('search-kit/indexes') }] %}
+{% set crumbs = [{ label: "Search Kit"|t('search-kit'), url: url('search-kit/indexes') }] %}
 
 {% set siteOptions = [{ label: "All sites"|t('search-kit'), value: '' }] %}
 {% for site in craft.app.sites.getAllSites() %}

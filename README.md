@@ -1,10 +1,10 @@
-# SearchKit
+# Search Kit
 
 Search management and intelligence for Craft CMS.
 
 ## Status
 
-**Early development.** SearchKit can run searches from PHP and Twig, and keep indexes in step with
+**Early development.** Search Kit can run searches from PHP and Twig, and keep indexes in step with
 Craft content. It provides search providers behind a single interface, provider-independent query,
 result and document objects, database-backed search indexes and searchable field configuration, a
 search service that runs a query through an index's provider, filtering, ranges, sorting,
@@ -29,7 +29,7 @@ Craft's own GraphQL API, where a schema decides which indexes and sites it may s
 rules, synonyms, API keys, search behaviour and what is recorded are managed from the control panel
 or from PHP. Two providers ship with it: one backed by Craft's own search index, and one backed by a
 Meilisearch server. Where Craft Commerce is installed, products and variants are indexed, filtered
-and merchandised by that same machinery, through an integration the rest of SearchKit knows nothing
+and merchandised by that same machinery, through an integration the rest of Search Kit knows nothing
 about.
 
 See [Limitations](#limitations) for what is not there yet.
@@ -57,8 +57,8 @@ raw text → normalization → operators and tokens → stop words → synonyms 
 A provider is only ever handed terms. It never has to read search syntax of its own, and nothing a
 visitor types is used to build a query by hand.
 
-Queries and results are SearchKit's own types, so no search engine's request or response format
-reaches the rest of the plugin. Providers declare what they can do, and SearchKit rejects a query
+Queries and results are Search Kit's own types, so no search engine's request or response format
+reaches the rest of the plugin. Providers declare what they can do, and Search Kit rejects a query
 asking for something the provider cannot honour rather than quietly ignoring it.
 
 ```php
@@ -72,32 +72,32 @@ $result = SearchKit::getInstance()->getSearch()->search(
 
 ### The Craft provider
 
-The bundled provider searches Craft's own search index, so SearchKit works without any external
+The bundled provider searches Craft's own search index, so Search Kit works without any external
 service. Craft scores results itself, which sets real limits on what this provider can honour:
 
 - It searches, indexes, filters, counts and sorts, using Craft's own element query criteria, field
   conditions and sort options. It also honours phrases, exclusions, alternation and partial
   matching, which it expresses through Craft's own search syntax rather than through SQL of
-  SearchKit's making.
+  Search Kit's making.
 - It cannot weight fields or highlight, so a query asking for either is rejected rather than
-  quietly run without it — highlighting is instead worked out by SearchKit itself, as described
+  quietly run without it — highlighting is instead worked out by Search Kit itself, as described
   under [Snippets and highlighting](#snippets-and-highlighting).
-- **It has no typo tolerance of its own**, so SearchKit corrects for it, as described under
+- **It has no typo tolerance of its own**, so Search Kit corrects for it, as described under
   [Typo tolerance](#typo-tolerance). A provider that declares the capability keeps its own answer
-  and SearchKit stays out of the way.
+  and Search Kit stays out of the way.
 - **A score is only reported when results are ranked by relevance.** Craft works one out while
   ordering by `score`; order by anything else and every hit's score is `0`.
 - **Searchable fields do not narrow what it searches.** It uses their element types to decide which
   element types to query, and their handles to tell Craft which custom fields to index — but a
   search still matches anything Craft has indexed for those elements. Craft's search API offers no
-  way to restrict a query to a set of fields, and SearchKit does not rewrite your query to fake one.
+  way to restrict a query to a set of fields, and Search Kit does not rewrite your query to fake one.
 - **Weights are configuration, not ranking.** They are stored and exposed for providers that can use
   them; this provider leaves ranking entirely to Craft.
 - **It does not delete.** Craft clears an element's own keywords when the element is deleted, so the
-  provider declares no deletion capability and SearchKit never records deletions for it.
+  provider declares no deletion capability and Search Kit never records deletions for it.
 - **It cannot discard and recreate an index**, so it declares no rebuild capability either. A
   rebuild reindexes every element in scope over the top of what Craft already holds.
-- **Indexes are not physically separate.** Craft has exactly one search index, and every SearchKit
+- **Indexes are not physically separate.** Craft has exactly one search index, and every Search Kit
   index using this provider writes to and reads from it. Two indexes are separate *configurations*
   — different element types, sites and fields — not separate stores. Indexing an element through
   one index updates the same Craft keywords the other would read, and removing an element type from
@@ -107,7 +107,7 @@ service. Craft scores results itself, which sets real limits on what this provid
 
 Serves an index from a [Meilisearch](https://www.meilisearch.com) server (1.x). Meilisearch scores,
 highlights, counts and tolerates typos itself, so this provider honours far more of the search API
-than the Craft one does — and every SearchKit index gets a store of its own.
+than the Craft one does — and every Search Kit index gets a store of its own.
 
 A rebuild also tells Meilisearch which languages the index's content is written in, taken from the
 sites it covers, so words are tokenized and stemmed the way those languages work. A site in a
@@ -130,10 +130,10 @@ MEILISEARCH_URL=http://localhost:7700
 MEILISEARCH_API_KEY=your-search-key
 ```
 
-One SearchKit index maps to one Meilisearch index, named `prefix` + the index handle. Each element,
+One Search Kit index maps to one Meilisearch index, named `prefix` + the index handle. Each element,
 in each site, is one document: its identity (`elementId`, `siteId`, `elementType`) alongside the
 configured searchable values under a `fields` object, so a field handle can never collide with the
-identity SearchKit needs back.
+identity Search Kit needs back.
 
 **Rebuild the index after configuring it.** A rebuild waits for anything Meilisearch still has
 queued against the index, discards it and recreates it, and that is the moment its searchable,
@@ -147,21 +147,21 @@ else is rejected rather than quietly dropped.
 
 What it cannot do:
 
-- **No `OR` between terms**, so a query using the operator is refused — and because SearchKit
+- **No `OR` between terms**, so a query using the operator is refused — and because Search Kit
   expresses synonyms as alternatives, **configured synonyms are not applied** to an index this
-  provider serves. Meilisearch has synonyms of its own, which SearchKit does not manage.
+  provider serves. Meilisearch has synonyms of its own, which Search Kit does not manage.
 - **No per-term partial matching**, so `boot*` is refused and the index's partial matching setting
   is not applied. Meilisearch matches word prefixes in its own way instead.
-- **Typo tolerance is Meilisearch's.** It declares the capability, so SearchKit never corrects a
+- **Typo tolerance is Meilisearch's.** It declares the capability, so Search Kit never corrects a
   search of one of its indexes, and the index's own typo settings do not reach it.
 - **Text cannot be compared.** Searchable values are stored as the keywords a Craft field produced,
   so `>`, `>=`, `<` and `<=` are refused on them and accepted only on `id` and `siteId`.
 - **Two round trips per document.** Meilisearch accepts a write and applies it afterwards, and it
   can still refuse it at that point, so every write is followed until Meilisearch confirms it —
-  otherwise SearchKit would settle an indexing operation that never landed. A rebuild of a large
+  otherwise Search Kit would settle an indexing operation that never landed. A rebuild of a large
   site is therefore a long run of small HTTP calls.
 - **Totals stop being exact past Meilisearch's `maxTotalHits`**, 1000 by default, which also caps
-  how deep results can be paged. SearchKit does not change that setting.
+  how deep results can be paged. Search Kit does not change that setting.
 - Scores are Meilisearch's ranking scores, between 0 and 1, so a rule's boost or bury amount has to
   be chosen on that scale rather than on the one Craft scores with.
 
@@ -269,7 +269,7 @@ unrestricted query of each element type returns.
   never comes back as an identifier with nothing behind it. That only happens when a provider's
   index has fallen behind Craft, and the total drops with it.
 
-SearchKit adds no permissions of its own for searching: it asks Craft. The control panel permissions
+Search Kit adds no permissions of its own for searching: it asks Craft. The control panel permissions
 govern only index management.
 
 ### Filters
@@ -396,7 +396,7 @@ unusable value is reported as an error rather than saved as something else.
 
 Query text and indexed content go through Craft's own keyword normalization: lowercased, stripped
 of markup, punctuation, diacritics and emoji, with whitespace collapsed. Both sides are reduced the
-same way, so `Café` finds `cafe` and SearchKit never disagrees with what Craft indexed.
+same way, so `Café` finds `cafe` and Search Kit never disagrees with what Craft indexed.
 
 Normalization is language-aware, because Craft's is: a character folds differently depending on the
 language, so content is reduced in the language of the site it belongs to and a query is read in the
@@ -473,7 +473,7 @@ rather than emptied, so searching for `the who` still searches for something.
 ### Synonyms
 
 A synonym makes a search for one word find the others as well. They are managed under
-**SearchKit → Synonyms**, and each group covers one index or all of them, and one site or all of
+**Search Kit → Synonyms**, and each group covers one index or all of them, and one site or all of
 them.
 
 | Type | Behaviour |
@@ -564,7 +564,7 @@ all of this holds:
 - the search found results, and somebody opened one of them — so the query is known to lead
   somewhere real;
 - it was searched for at least five times, across at least two separate days, which raises the bar
-  on a one-off or a single burst of searching (both numbers are configurable per index). SearchKit
+  on a one-off or a single burst of searching (both numbers are configurable per index). Search Kit
   records nothing about who searched, so this is a threshold on **repeated searches over separate
   days** — it is not evidence that different people made them;
 - and **every word of it is a word publicly searchable content still uses**, checked the same way
@@ -585,7 +585,7 @@ query from one site is never offered in another just because its words happen to
 
 ### The words an index holds
 
-These come from the content SearchKit indexes. Each word is recorded against the document it was
+These come from the content Search Kit indexes. Each word is recorded against the document it was
 read from, so the list follows the content:
 
 | What happens to a document | What happens to its words |
@@ -600,7 +600,7 @@ read from, so the list follows the content:
 A word several documents use survives until the last of them stops using it.
 
 **Suggestions only ever name published content.** Before a word is completed, corrected to, or
-offered, SearchKit checks that a document anybody may find still uses it — Craft's own definition of
+offered, Search Kit checks that a document anybody may find still uses it — Craft's own definition of
 published, asked of the element itself. A word that only a draft, a disabled entry, one that is not
 posted yet, one that has expired, or one that has been deleted uses is never offered, to anybody.
 That applies to administrators too: unpublished content is searched for deliberately, by status, not
@@ -730,7 +730,7 @@ loaded and authorized exactly like one the search found itself:
 - It is loaded under the same status the search ran with, so a result that is disabled, not yet
   posted, expired, disabled for the site being searched, or in the trash is not returned — to
   anybody, administrators included.
-- Where SearchKit applies Craft's `canView()` — on any search of something other than published
+- Where Search Kit applies Craft's `canView()` — on any search of something other than published
   content — a placed result is put to it with all the others.
 - A placed result that is withheld is taken off the total on the page it would have appeared on. On
   a page far enough in that the placed results all sit above it, the total still counts it — see
@@ -780,7 +780,7 @@ while it searches, so an empty answer from it does not mean the search found not
 
 ## Search activity
 
-SearchKit records what is searched for, so the searches that fail and the content nobody can find
+Search Kit records what is searched for, so the searches that fail and the content nobody can find
 are visible rather than guessed at.
 
 Nothing recorded identifies who searched. There is no account, no address, no session and no
@@ -879,7 +879,7 @@ many results were opened.
 
 ### Dashboard
 
-The **SearchKit** section itself opens the dashboard, which puts all of this on one page for
+The **Search Kit** section itself opens the dashboard, which puts all of this on one page for
 whoever may view search activity. Without that permission it opens the indexes instead.
 
 | Section | What it shows |
@@ -895,7 +895,7 @@ whoever may view search activity. Without that permission it opens the indexes i
 | Search health | Every index: whether it is serving, its provider, its site scope and what it records |
 
 Everything on the page reads the same index, site and date filters, with presets for the last 7, 30
-and 90 days. The dates mean the same thing they do everywhere else in SearchKit: the day chosen at
+and 90 days. The dates mean the same thing they do everywhere else in Search Kit: the day chosen at
 the far end is counted in full. A site filter counts searches of that site alone.
 
 **Arranging it.** *Arrange panels* turns on a mode where each panel can be dragged by its bar into
@@ -913,7 +913,7 @@ JavaScript — and everything a chart says is also written out as a figure or a 
 ## What to do next
 
 Everything above describes what happened. This reads a step further and says what is worth doing
-about it, always with the measurements behind it. It is reached from **SearchKit → What to do next**,
+about it, always with the measurements behind it. It is reached from **Search Kit → What to do next**,
 needs the same permission as search activity, and reads the same index, site and date filters.
 Nothing on the page changes a search, and nothing here is ever applied on its own.
 
@@ -1071,13 +1071,13 @@ then shows:
 | Time | Milliseconds spent resolving the index, reading the query, planning and applying rules, searching, loading and authorizing results, working out matched fields, and finding suggestions |
 | Rules | Every rule considered, whether it matched and why not, and what each of its actions did — including an action a higher-priority rule had already settled |
 | Results | Each result in rank order, with what put it there: a score — the provider's own plus what the rules moved it by — or a pin at a stated position, or a promotion. A placed result shows no score, because the search never gave it one. Also what it matched on and the weight the index gives those fields |
-| SearchKit exclusions | What SearchKit itself kept out: the targets a rule removed before the search ran, named with their status, and the results that were found but could not be shown in the site and status the search ran in |
+| Search Kit exclusions | What Search Kit itself kept out: the targets a rule removed before the search ran, named with their status, and the results that were found but could not be shown in the site and status the search ran in |
 
 **What it will not claim.** The scoring model shown is the real one: a result is ranked by the
 provider's own score plus whatever the rules moved it by. The Craft provider scores results itself
 and applies no field weighting, and the page says so rather than presenting configured weights as
 though they decided the ranking. A result a rule pinned or promoted is shown as placed, never as
-though a score put it there. A rule's hidden target is listed as something SearchKit kept out, not
+though a score put it there. A rule's hidden target is listed as something Search Kit kept out, not
 as a result the query matched: it was never searched for, so whether it would have matched is not
 known, and the debugger does not re-run the search without the rule to find out.
 
@@ -1101,7 +1101,7 @@ token, and only published content is searchable anonymously. Asking for anything
 
 ### API keys
 
-The HTTP API is authenticated with a key, managed under **SearchKit → API keys** with the *Create
+The HTTP API is authenticated with a key, managed under **Search Kit → API keys** with the *Create
 and revoke search API keys* permission.
 
 - A key is **shown once**, as soon as it is created. It is stored only as an irreversible SHA-256
@@ -1202,8 +1202,8 @@ spend two windows' worth of requests either side of a boundary.
 
 ### GraphQL
 
-SearchKit adds one query to Craft's GraphQL API, `searchKitSearch`. It is only offered to a schema
-that names at least one SearchKit index, and each index is a schema component of its own — grant
+Search Kit adds one query to Craft's GraphQL API, `searchKitSearch`. It is only offered to a schema
+that names at least one Search Kit index, and each index is a schema component of its own — grant
 them under **GraphQL → Schemas**, the same way sections and asset volumes are granted.
 
 ```graphql
@@ -1230,7 +1230,7 @@ is always a list — `in` and `notIn` take several, and every other operator tak
 
 **What a schema decides.** An index the schema does not name is reported as though it were not
 there. A site the schema does not allow cannot be searched — every site a search names has to
-be allowed — and a search covering every site is refused unless the schema allows every site — naming one is what narrows it, rather than SearchKit
+be allowed — and a search covering every site is refused unless the schema allows every site — naming one is what narrows it, rather than Search Kit
 quietly answering for part of the scope.
 
 **A hit names an element; it does not hand out its content.** `elementId` and `siteId` are what a
@@ -1241,7 +1241,7 @@ that index searches.
 
 ## Indexing
 
-SearchKit keeps an index in step with Craft content by listening to Craft's own element events.
+Search Kit keeps an index in step with Craft content by listening to Craft's own element events.
 Nothing is indexed inside the request that changed the content:
 
 ```
@@ -1283,7 +1283,7 @@ the same element, the newer intent replaces it and the worker's result is discar
 deleting work it never did.
 
 A failing operation is retried up to three times. After that it is parked as failed for an
-administrator to look at and retry from the control panel or the command line. SearchKit's own
+administrator to look at and retry from the control panel or the command line. Search Kit's own
 error messages are shown as written; anything else is reported generically and its detail goes to
 the log, so a provider can never leak internals into the control panel.
 
@@ -1320,7 +1320,7 @@ older configuration — and rebuilding again settles the current one.
 
 An index and the fields it searches are one configuration, saved as one thing: if any part of it is
 invalid the whole save is rolled back and the previous configuration stays in place. A field is
-only accepted if the element type is one SearchKit indexes and the handle is genuinely searchable
+only accepted if the element type is one Search Kit indexes and the handle is genuinely searchable
 on it, so the control panel offers exactly what a save accepts, and the same rules apply from the
 console or from PHP.
 
@@ -1340,7 +1340,7 @@ the status API and on the command line. These count as changes:
 | Search behaviour, or synonyms | no |
 
 Saving a configuration is a short database transaction; it never waits for a running rebuild.
-SearchKit does not rebuild by itself: rebuilding can be expensive, so it is left as a deliberate
+Search Kit does not rebuild by itself: rebuilding can be expensive, so it is left as a deliberate
 step. Changing an index's provider leaves whatever the previous provider held untouched — nothing
 is migrated, and nothing pretends it was.
 
@@ -1350,26 +1350,26 @@ changes are not tracked while it is off, which is why switching it back on marks
 
 ### Control panel
 
-**SearchKit → Indexes** lists indexes with their pending and failed counts, when they were last
+**Search Kit → Indexes** lists indexes with their pending and failed counts, when they were last
 indexed and whether they are current, and lets you create, edit, enable, disable and delete
 indexes, choose their searchable fields and weights, set how queries against them are read,
 rebuild them, and retry failed operations. An index is only shown as current when it is enabled,
 nothing is outstanding, nothing has failed, no rebuild is owed and the provider says it can serve.
 
-**SearchKit → Rules** lists and edits search rules: the query that triggers them, what they do to
+**Search Kit → Rules** lists and edits search rules: the query that triggers them, what they do to
 the results, their schedule and their priority.
 
-**SearchKit → Synonyms** lists and edits synonym groups.
+**Search Kit → Synonyms** lists and edits synonym groups.
 
-**SearchKit → API keys** lists, creates and revokes the keys the HTTP API is reached with. A key is
+**Search Kit → API keys** lists, creates and revokes the keys the HTTP API is reached with. A key is
 shown once, when it is created.
 
-**SearchKit → Search activity** lists recorded searches, filtered by index, site and date range,
+**Search Kit → Search activity** lists recorded searches, filtered by index, site and date range,
 with the totals for whatever is being shown. A date range covers the whole of both days it names.
 Deleting from that page forgets every search recorded for the selected index, or for every index —
 it is not limited by the dates or the site being shown, and says so.
 
-**SearchKit → What to do next** reads the same recorded activity a step further: the quality score,
+**Search Kit → What to do next** reads the same recorded activity a step further: the quality score,
 what has changed against the window before, and what to do about each gap, pair and buried result.
 
 Permissions govern all of it: viewing, managing indexes, rebuilding or retrying, managing rules,
@@ -1389,7 +1389,7 @@ php craft search-kit/index/retry <handle>    # put failed operations back in the
 
 ## Craft Commerce
 
-Commerce is optional. SearchKit does not require it and does not depend on it: the only Commerce
+Commerce is optional. Search Kit does not require it and does not depend on it: the only Commerce
 class names in the codebase are two strings inside one service, so nothing can autoload Commerce
 that is not installed, and without the Commerce plugin that service registers nothing at all — no
 element types, no filters, no listeners.
@@ -1401,7 +1401,7 @@ abstraction, `SearchResult`, rules, activity, debugger, REST and GraphQL. There 
 search path, no Commerce rules engine and no Commerce endpoints.
 
 Verified against **Craft Commerce 5.7.4** on Craft 5.10.13.2 — Commerce 5 is the only line that runs
-on Craft 5. What SearchKit offers is settled against the query the installed Commerce actually
+on Craft 5. What Search Kit offers is settled against the query the installed Commerce actually
 defines, so a version that drops or renames something simply stops offering it.
 
 ### What gets indexed
@@ -1422,7 +1422,7 @@ instance — are filter criteria rather than indexed content.
 
 A product's searchable attributes — `defaultSku` and `sku` — are the values Commerce fills from its
 **default** variant, so that variant being saved, deleted or restored can leave the product's
-document stale. SearchKit follows exactly that, and nothing wider:
+document stale. Search Kit follows exactly that, and nothing wider:
 
 - A variant that is not the default is not followed. Nothing of it reaches the product's document,
   so the product cannot have gone stale, and the product is never even loaded.
@@ -1467,19 +1467,19 @@ Stock, availability and inventory tracking are four different questions and are 
 `hasStock` asks whether anything is available — a variant Commerce does not track has unlimited
 stock and always answers yes; `stock` asks how much; `hasUnlimitedStock` and `inventoryTracked` ask
 whether Commerce counts it at all; and `availableForPurchase` is a separate flag again. An element's
-`status` is none of these and stays what it is everywhere else in SearchKit.
+`status` is none of these and stays what it is everywhere else in Search Kit.
 
 **Deliberately not exposed:** promotional and sale pricing (`promotionalPrice`, `salePrice`,
 `onPromotion`, `hasSales`), because what a shopper pays depends on catalog pricing rules and on who
 is asking, and an anonymous search has no deterministic answer; `forCustomer`, for the same reason;
-`hasVariant`, because it takes a query rather than a value and SearchKit's filters carry strings,
+`hasVariant`, because it takes a query rather than a value and Search Kit's filters carry strings,
 numbers, booleans and dates only; and shipping and tax categories, which are internal configuration
 rather than something a shopper searches by. Each of these is refused rather than ignored. Customer,
 order, payment and address data is never indexed, never filterable and never returned.
 
 ### Sites, rules, activity and the APIs
 
-Commerce changes none of it. A product or variant is resolved in the site SearchKit asked for, an
+Commerce changes none of it. A product or variant is resolved in the site Search Kit asked for, an
 index's site scope is never widened, and there is no Commerce-specific site fallback. Products and
 variants are merchandised with the rules that already exist — boost, bury, hide, pin, promote and
 redirect, on the same priorities, schedules and site scoping — and a rule's element type is checked
@@ -1489,7 +1489,7 @@ GraphQL paths under the same keys, schemas, index scopes and site restrictions.
 
 ## Limitations
 
-What SearchKit does not do yet, and the limits of what it does.
+What Search Kit does not do yet, and the limits of what it does.
 
 - Only entries, categories, assets and users are offered as indexable element types, plus Commerce
   products and variants where Craft Commerce is installed.
@@ -1515,7 +1515,7 @@ What SearchKit does not do yet, and the limits of what it does.
   language needs its own words configured under **Extra stop words**.
 - Language-aware analysis is Craft's character folding, plus whatever the provider does with the
   languages it is told about. There is no stemming, lemmatization or per-language analyzer of
-  SearchKit's own.
+  Search Kit's own.
 - `-` and `OR` cannot be combined in one term; the query is refused rather than reinterpreted.
 - The dictionary's own suggestions are ranked by how little they change what was typed; recorded
   activity does not reorder them. Past searches can be offered alongside them, but only as whole
@@ -1588,7 +1588,7 @@ What SearchKit does not do yet, and the limits of what it does.
   an index's whole scope is not offered when suggesting for one site inside it, so a narrowed search
   box on an all-sites index offers only what was searched in that site.
 - The minimum searches and minimum days behind an offered query are thresholds on repetition. They
-  are not a count of people: SearchKit records nothing that could distinguish one searcher from
+  are not a count of people: Search Kit records nothing that could distinguish one searcher from
   another, and deliberately keeps it that way.
 - Content gaps are looked for among the most-searched queries the period returns, not across every
   query recorded in it.
@@ -1605,7 +1605,7 @@ What SearchKit does not do yet, and the limits of what it does.
 - A recommendation links to the page for writing a rule or a synonym; it does not prefill one.
 - The debugger explains one search at a time. It cannot compare two searches, and it cannot answer
   why a particular piece of content was not matched: it explains the results a search returned and
-  the ones SearchKit itself took out of it, not everything it did not find.
+  the ones Search Kit itself took out of it, not everything it did not find.
 - The HTTP and GraphQL APIs search published content only. There is no way to search unpublished
   content through either of them, whatever the key or the schema.
 - Only search is exposed. Autocomplete, suggestions for a failed search and click reporting are
@@ -1623,7 +1623,7 @@ What SearchKit does not do yet, and the limits of what it does.
 
 ## Local development
 
-SearchKit is developed as a Composer path repository inside a Craft project. Add the plugin
+Search Kit is developed as a Composer path repository inside a Craft project. Add the plugin
 directory as a repository and require it:
 
 ```json
@@ -1649,9 +1649,9 @@ composer test              # unit tests, no Craft app required
 composer test-integration  # runs against the surrounding Craft project's database
 ```
 
-The integration suite boots the Craft project SearchKit is installed in, so run it from that
+The integration suite boots the Craft project Search Kit is installed in, so run it from that
 project's environment.
 
 ## License
 
-SearchKit is licensed under [The Craft License](LICENSE.md).
+Search Kit is licensed under [The Craft License](LICENSE.md).

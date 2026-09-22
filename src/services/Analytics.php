@@ -322,7 +322,7 @@ class Analytics extends Component
         $plugin = SearchKit::getInstance();
 
         if ($plugin === null) {
-            throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            throw new InvalidConfigException('Search Kit is not installed or is disabled.');
         }
 
         return $plugin;

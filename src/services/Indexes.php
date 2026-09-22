@@ -231,7 +231,7 @@ class Indexes extends Component
     public function getSearchableFields(): SearchableFields
     {
         return $this->_searchableFields ??= SearchKit::getInstance()?->getSearchableFields()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 
     public function setProviders(Providers $providers): void
@@ -242,7 +242,7 @@ class Indexes extends Component
     public function getProviders(): Providers
     {
         return $this->_providers ??= SearchKit::getInstance()?->getProviders()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 
     public function deleteIndex(SearchIndex $index): bool

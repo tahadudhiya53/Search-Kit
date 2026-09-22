@@ -271,6 +271,6 @@ class Highlighting extends Component
     public function getDocuments(): Documents
     {
         return $this->_documents ??= SearchKit::getInstance()?->getDocuments()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 }

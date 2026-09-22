@@ -156,7 +156,7 @@ class IndexController extends Controller
         $plugin = SearchKit::getInstance();
 
         if ($plugin === null) {
-            throw new Exception('SearchKit is not installed or is disabled.');
+            throw new Exception('Search Kit is not installed or is disabled.');
         }
 
         return $plugin;

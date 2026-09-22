@@ -266,7 +266,7 @@ class SearchableFields extends Component
     public function getIndexes(): Indexes
     {
         return $this->_indexes ??= SearchKit::getInstance()?->getIndexes()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+            ?? throw new InvalidConfigException('Search Kit is not installed or is disabled.');
     }
 
     public function deleteField(SearchableField $field): bool
