@@ -2,14 +2,13 @@
 
 namespace Tahadudhiya\SearchKit\models;
 
-use craft\base\Model;
 use Tahadudhiya\SearchKit\enums\PartialMatchMode;
 
 /**
  * How an index treats the text it is searched with. Stored with the index it belongs to, so two
  * indexes over the same content can behave differently.
  */
-class SearchSettings extends Model
+class SearchSettings extends StoredSettings
 {
     public const MAX_TYPO_DISTANCE = 2;
     public const MAX_SUGGESTIONS = 25;
@@ -46,95 +45,24 @@ class SearchSettings extends Model
 
     public int $suggestionLimit = 5;
 
-    /** @var string[] Settings whose given value was not usable, reported when this is validated. */
-    private array $_rejected = [];
-
-    /**
-     * Whatever was stored, which may predate a setting or have been edited by hand. A value that
-     * cannot be read falls back to the default rather than failing to open the index.
-     *
-     * @param array<string,mixed> $config
-     */
-    public static function fromConfig(array $config): self
+    protected static function describe(): string
     {
-        return self::read($config, false);
+        return 'a search setting';
     }
 
-    /**
-     * What somebody posted. Nothing is coerced here: `"maybe"` is not `true` and `"12.7"` is not
-     * `12`, so a mistake is reported rather than silently saved as something else.
-     *
-     * @param array<string,mixed> $input
-     */
-    public static function fromInput(array $input): self
+    protected static function fallbackAttribute(): string
     {
-        return self::read($input, true);
+        return 'operators';
     }
 
-    /**
-     * @param array<string,mixed> $values
-     * @param bool $strict Whether an unusable value is an error or simply left at its default.
-     */
-    private static function read(array $values, bool $strict): self
+    protected static function readValue(string $name, mixed $value): mixed
     {
-        $settings = new self();
-
-        foreach ($values as $name => $value) {
-            if (!property_exists($settings, $name) || str_starts_with($name, '_')) {
-                if ($strict) {
-                    $settings->_rejected[$name] = "“{$name}” is not a search setting.";
-                }
-
-                continue;
-            }
-
-            $read = match ($name) {
-                'partialMatching' => PartialMatchMode::tryFrom(is_string($value) ? $value : ''),
-                'customStopWords' => self::readWords($value),
-                'minPartialLength', 'typoMinLength', 'typoMaxDistance', 'suggestionLimit' => self::readInteger($value),
-                default => self::readBoolean($value),
-            };
-
-            if ($read === null) {
-                if ($strict) {
-                    $settings->_rejected[$name] = "“{$name}” was not given a usable value.";
-                }
-
-                continue;
-            }
-
-            $settings->$name = $read;
-        }
-
-        return $settings;
-    }
-
-    /**
-     * A real boolean, or the `1` and empty string a control panel switch posts. `'false'` and
-     * `'yes'` each have two plausible readings, so neither is guessed at.
-     */
-    private static function readBoolean(mixed $value): ?bool
-    {
-        return match (true) {
-            is_bool($value) => $value,
-            $value === 1, $value === '1' => true,
-            $value === 0, $value === '0', $value === '' => false,
-            default => null,
+        return match ($name) {
+            'partialMatching' => PartialMatchMode::tryFrom(is_string($value) ? $value : ''),
+            'customStopWords' => self::readWords($value),
+            'minPartialLength', 'typoMinLength', 'typoMaxDistance', 'suggestionLimit' => self::readInteger($value),
+            default => self::readBoolean($value),
         };
-    }
-
-    /**
-     * A whole number, or the string form of one, since that is how a form posts it.
-     */
-    private static function readInteger(mixed $value): ?int
-    {
-        if (is_bool($value) || (!is_int($value) && !is_string($value))) {
-            return null;
-        }
-
-        $integer = filter_var($value, FILTER_VALIDATE_INT);
-
-        return $integer === false ? null : $integer;
     }
 
     /**
@@ -197,12 +125,5 @@ class SearchSettings extends Model
             // Values that never reached a property at all, because they could not be read.
             [['operators'], 'validateInput', 'skipOnEmpty' => false],
         ];
-    }
-
-    public function validateInput(): void
-    {
-        foreach ($this->_rejected as $name => $message) {
-            $this->addError(property_exists($this, $name) ? $name : 'operators', $message);
-        }
     }
 }

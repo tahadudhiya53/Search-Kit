@@ -13,7 +13,6 @@ use Tahadudhiya\SearchKit\models\RuleAction;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchRule;
 use Tahadudhiya\SearchKit\SearchKit;
-use yii\web\ForbiddenHttpException;
 use yii\web\NotFoundHttpException;
 use yii\web\Response;
 
@@ -36,8 +35,8 @@ class RulesController extends Controller
     public function actionIndex(): Response
     {
         return $this->renderTemplate('search-kit/rules/_index', [
-            'rules' => $this->plugin()->getRules()->getAllRules(),
-            'indexes' => $this->plugin()->getIndexes()->getAllIndexes(),
+            'rules' => SearchKit::instance()->getRules()->getAllRules(),
+            'indexes' => SearchKit::instance()->getIndexes()->getAllIndexes(),
             'canManage' => $this->canManage(),
         ]);
     }
@@ -45,14 +44,14 @@ class RulesController extends Controller
     public function actionEdit(?int $ruleId = null, ?SearchRule $rule = null): Response
     {
         $rule ??= $ruleId !== null
-            ? $this->plugin()->getRules()->getRuleById($ruleId)
+            ? SearchKit::instance()->getRules()->getRuleById($ruleId)
             : new SearchRule();
 
         if ($rule === null) {
             throw new NotFoundHttpException('Search rule not found.');
         }
 
-        $index = $rule->indexId !== null ? $this->plugin()->getIndexes()->getIndexById($rule->indexId) : null;
+        $index = $rule->indexId !== null ? SearchKit::instance()->getIndexes()->getIndexById($rule->indexId) : null;
 
         return $this->renderTemplate('search-kit/rules/_edit', [
             'rule' => $rule,
@@ -60,7 +59,7 @@ class RulesController extends Controller
             // A placed result has to be put in one site, so the pickers only open once the rule and
             // its index have settled which site that is.
             'placementSiteId' => $index !== null ? $rule->scopeSiteId($index->siteId) : null,
-            'indexes' => $this->plugin()->getIndexes()->getAllIndexes(),
+            'indexes' => SearchKit::instance()->getIndexes()->getAllIndexes(),
             'elementTypes' => $index !== null ? $this->elementTypes($index) : [],
             'actionTypes' => array_combine(
                 array_map(static fn(RuleActionType $type) => $type->value, RuleActionType::cases()),
@@ -83,7 +82,7 @@ class RulesController extends Controller
         $ruleId = $request->getBodyParam('ruleId');
 
         $rule = $ruleId !== null
-            ? $this->plugin()->getRules()->getRuleById((int)$ruleId)
+            ? SearchKit::instance()->getRules()->getRuleById((int)$ruleId)
             : new SearchRule();
 
         if ($rule === null) {
@@ -106,7 +105,7 @@ class RulesController extends Controller
 
         $rule->setActions($this->postedActions($rule));
 
-        if (!$this->plugin()->getRules()->saveRule($rule)) {
+        if (!SearchKit::instance()->getRules()->saveRule($rule)) {
             $this->setFailFlash(Craft::t('search-kit', 'Couldn’t save rule.'));
             Craft::$app->getUrlManager()->setRouteParams(['rule' => $rule]);
 
@@ -124,13 +123,13 @@ class RulesController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_MANAGE_RULES);
 
         $ruleId = (int)$this->request->getRequiredBodyParam('ruleId');
-        $rule = $this->plugin()->getRules()->getRuleById($ruleId);
+        $rule = SearchKit::instance()->getRules()->getRuleById($ruleId);
 
         if ($rule === null) {
             throw new NotFoundHttpException('Search rule not found.');
         }
 
-        $this->plugin()->getRules()->deleteRule($rule);
+        SearchKit::instance()->getRules()->deleteRule($rule);
         $this->setSuccessFlash(Craft::t('search-kit', 'Rule deleted.'));
 
         return $this->redirect('search-kit/rules');
@@ -146,7 +145,7 @@ class RulesController extends Controller
     {
         $posted = $this->request->getBodyParam('results');
         $allowed = $rule->indexId !== null
-            ? array_keys($this->elementTypes($this->plugin()->getIndexes()->getIndexById($rule->indexId)))
+            ? array_keys($this->elementTypes(SearchKit::instance()->getIndexes()->getIndexById($rule->indexId)))
             : [];
         $actions = [];
         $sortOrder = 0;
@@ -262,7 +261,7 @@ class RulesController extends Controller
             return [];
         }
 
-        $this->plugin()->getSearchableFields()->attachFields($index);
+        SearchKit::instance()->getSearchableFields()->attachFields($index);
         $types = [];
 
         foreach ($index->getElementTypes() as $elementType) {
@@ -291,16 +290,5 @@ class RulesController extends Controller
     private function canManage(): bool
     {
         return Craft::$app->getUser()->checkPermission(SearchKit::PERMISSION_MANAGE_RULES);
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('SearchKit is not installed.');
-        }
-
-        return $plugin;
     }
 }

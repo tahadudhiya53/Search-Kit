@@ -7,7 +7,6 @@ use craft\web\Controller;
 use Tahadudhiya\SearchKit\enums\SynonymType;
 use Tahadudhiya\SearchKit\models\Synonym;
 use Tahadudhiya\SearchKit\SearchKit;
-use yii\web\ForbiddenHttpException;
 use yii\web\NotFoundHttpException;
 use yii\web\Response;
 
@@ -30,8 +29,8 @@ class SynonymsController extends Controller
     public function actionIndex(): Response
     {
         return $this->renderTemplate('search-kit/synonyms/_index', [
-            'synonyms' => $this->plugin()->getSynonyms()->getAllSynonyms(),
-            'indexes' => $this->plugin()->getIndexes()->getAllIndexes(),
+            'synonyms' => SearchKit::instance()->getSynonyms()->getAllSynonyms(),
+            'indexes' => SearchKit::instance()->getIndexes()->getAllIndexes(),
             'canManage' => $this->canManage(),
         ]);
     }
@@ -39,7 +38,7 @@ class SynonymsController extends Controller
     public function actionEdit(?int $synonymId = null, ?Synonym $synonym = null): Response
     {
         $synonym ??= $synonymId !== null
-            ? $this->plugin()->getSynonyms()->getSynonymById($synonymId)
+            ? SearchKit::instance()->getSynonyms()->getSynonymById($synonymId)
             : new Synonym();
 
         if ($synonym === null) {
@@ -49,7 +48,7 @@ class SynonymsController extends Controller
         return $this->renderTemplate('search-kit/synonyms/_edit', [
             'synonym' => $synonym,
             'isNew' => $synonym->id === null,
-            'indexes' => $this->plugin()->getIndexes()->getAllIndexes(),
+            'indexes' => SearchKit::instance()->getIndexes()->getAllIndexes(),
             'typeOptions' => array_map(
                 static fn(SynonymType $type) => ['label' => Craft::t('search-kit', $type->label()), 'value' => $type->value],
                 SynonymType::cases(),
@@ -67,7 +66,7 @@ class SynonymsController extends Controller
         $synonymId = $request->getBodyParam('synonymId');
 
         $synonym = $synonymId !== null
-            ? $this->plugin()->getSynonyms()->getSynonymById((int)$synonymId)
+            ? SearchKit::instance()->getSynonyms()->getSynonymById((int)$synonymId)
             : new Synonym();
 
         if ($synonym === null) {
@@ -86,7 +85,7 @@ class SynonymsController extends Controller
         $siteId = $request->getBodyParam('siteId');
         $synonym->siteId = $siteId !== null && $siteId !== '' ? (int)$siteId : null;
 
-        if (!$this->plugin()->getSynonyms()->saveSynonym($synonym)) {
+        if (!SearchKit::instance()->getSynonyms()->saveSynonym($synonym)) {
             $this->setFailFlash(Craft::t('search-kit', 'Couldn’t save synonym.'));
             Craft::$app->getUrlManager()->setRouteParams(['synonym' => $synonym]);
 
@@ -104,13 +103,13 @@ class SynonymsController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_MANAGE);
 
         $synonymId = (int)$this->request->getRequiredBodyParam('synonymId');
-        $synonym = $this->plugin()->getSynonyms()->getSynonymById($synonymId);
+        $synonym = SearchKit::instance()->getSynonyms()->getSynonymById($synonymId);
 
         if ($synonym === null) {
             throw new NotFoundHttpException('Synonym not found.');
         }
 
-        $this->plugin()->getSynonyms()->deleteSynonym($synonym);
+        SearchKit::instance()->getSynonyms()->deleteSynonym($synonym);
         $this->setSuccessFlash(Craft::t('search-kit', 'Synonym deleted.'));
 
         return $this->redirect('search-kit/synonyms');
@@ -133,16 +132,5 @@ class SynonymsController extends Controller
     private function canManage(): bool
     {
         return Craft::$app->getUser()->checkPermission(SearchKit::PERMISSION_MANAGE);
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('SearchKit is not installed.');
-        }
-
-        return $plugin;
     }
 }

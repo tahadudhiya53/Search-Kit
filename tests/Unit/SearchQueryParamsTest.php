@@ -89,7 +89,7 @@ class SearchQueryParamsTest extends TestCase
     public function testRejectsAnUnknownFilterOperator(): void
     {
         $this->expectException(InvalidQueryException::class);
-        SearchQuery::create('siteSearch', 'boots', ['filters' => ['postDate' => ['between' => 1]]]);
+        SearchQuery::create('siteSearch', 'boots', ['filters' => ['postDate' => ['roughly' => 1]]]);
     }
 
     public function testRejectsAFilterValueThatCannotBeCompared(): void
@@ -100,6 +100,58 @@ class SearchQueryParamsTest extends TestCase
 
         self::assertFalse($query->validate());
         self::assertArrayHasKey('filters', $query->getErrors());
+    }
+
+    public function testARangeFilterIsWrittenLikeEveryOtherOperator(): void
+    {
+        $filters = SearchQuery::create('siteSearch', 'boots', [
+            'filters' => ['price' => ['between' => [100, 500]]],
+        ])->getFilters();
+
+        self::assertSame(FilterOperator::Between, $filters[0]->operator);
+        self::assertSame([100, 500], $filters[0]->value);
+    }
+
+    public function testSitesAreAcceptedAsAListOrAsARequestParameter(): void
+    {
+        foreach ([['sites' => [1, 3]], ['sites' => '1,3']] as $params) {
+            $query = SearchQuery::create('siteSearch', 'boots', $params);
+
+            self::assertSame([1, 3], $query->getSiteScope());
+            // More than one site, so nothing downstream may read this as a single-site search.
+            self::assertNull($query->siteId);
+            self::assertNull($query->getSiteScopeId());
+            self::assertTrue($query->validate());
+        }
+    }
+
+    public function testAnEmptySiteListIsRejected(): void
+    {
+        $this->expectException(InvalidQueryException::class);
+        SearchQuery::create('siteSearch', 'boots', ['sites' => []]);
+    }
+
+    public function testFacetsAreAcceptedAsAListOrAsARequestParameter(): void
+    {
+        foreach ([['facets' => ['sectionId', 'elementType']], ['facets' => 'sectionId, elementType']] as $params) {
+            $query = SearchQuery::create('siteSearch', 'boots', $params);
+
+            self::assertSame(['sectionId', 'elementType'], $query->getFacets());
+            self::assertTrue($query->hasFacets());
+        }
+    }
+
+    public function testMoreFacetsThanOneSearchMayCarryAreRejected(): void
+    {
+        $query = SearchQuery::create('siteSearch', 'boots', [
+            'facets' => array_map(
+                static fn(int $number) => "field{$number}",
+                range(1, SearchQuery::MAX_FACETS + 1),
+            ),
+        ]);
+
+        self::assertFalse($query->validate());
+        self::assertArrayHasKey('facets', $query->getErrors());
     }
 
     public function testSortingIsAcceptedAsAString(): void

@@ -1,0 +1,192 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = "What to do next"|t('search-kit') %}
+{% set selectedSubnavItem = 'intelligence' %}
+
+{% set indexOptions = [{ label: "All indexes"|t('search-kit'), value: '' }] %}
+{% for indexId, indexName in indexNames %}
+    {% set indexOptions = indexOptions|merge([{ label: indexName, value: indexId }]) %}
+{% endfor %}
+
+{% set siteOptions = [{ label: "Any site"|t('search-kit'), value: '' }] %}
+{% for siteId, siteName in siteNames %}
+    {% set siteOptions = siteOptions|merge([{ label: siteName, value: siteId }]) %}
+{% endfor %}
+
+{% set today = now|date('Y-m-d') %}
+{% set activeFrom = criteria.dateFrom ? criteria.dateFrom|date('Y-m-d') : '' %}
+{% set activeTo = criteria.selectedDateTo ? criteria.selectedDateTo|date('Y-m-d') : '' %}
+
+{% set componentLabels = {
+    success: "Found something"|t('search-kit'),
+    engagement: "Led to a click"|t('search-kit'),
+    speed: "Answered quickly"|t('search-kit'),
+} %}
+
+{% set componentNotes = {
+    success: "Searches that found something at all"|t('search-kit'),
+    engagement: "Searches a result was opened from"|t('search-kit'),
+    speed: "Searches inside their own index’s slow threshold"|t('search-kit'),
+} %}
+
+{% block content %}
+    <p class="light sk-intro">{{ "What the recorded searches suggest somebody should do about them. Every reading here is taken from searches that were already recorded: nothing is predicted, and nothing on this page changes a search."|t('search-kit') }}</p>
+
+    <form method="get" accept-charset="UTF-8" class="sk-filters">
+        <div class="sk-field">
+            <span class="sk-field-label">{{ "Index"|t('search-kit') }}</span>
+            {{ forms.select({ name: 'indexId', options: indexOptions, value: criteria.indexId }) }}
+        </div>
+
+        <div class="sk-field">
+            <span class="sk-field-label">
+                {{ "Site"|t('search-kit') }}
+                <span class="info">{{ "Counts searches of that site alone. A search covering every site is not one of them."|t('search-kit') }}</span>
+            </span>
+            {{ forms.select({ name: 'siteId', options: siteOptions, value: criteria.siteId }) }}
+        </div>
+
+        <div class="sk-field">
+            <span class="sk-field-label">{{ "From"|t('search-kit') }}</span>
+            {{ forms.date({ name: 'dateFrom', value: criteria.dateFrom }) }}
+        </div>
+
+        <div class="sk-field">
+            <span class="sk-field-label">{{ "To"|t('search-kit') }}</span>
+            {{ forms.date({ name: 'dateTo', value: criteria.selectedDateTo }) }}
+        </div>
+
+        <div class="sk-field">
+            <button type="submit" class="btn submit">{{ "Apply"|t('search-kit') }}</button>
+        </div>
+    </form>
+
+    {% if unavailable %}
+        <p class="error">{{ "Search activity could not be read just now, so there is nothing to go on. The error has been logged."|t('search-kit') }}</p>
+    {% else %}
+        <h2 class="sk-section-heading">{{ "Search quality"|t('search-kit') }}</h2>
+
+        {% if not quality.isScored() %}
+            <p class="zilch">{{ "Nothing was searched for in this period, so there is nothing to score."|t('search-kit') }}</p>
+        {% else %}
+            <ul class="sk-stats">
+                <li class="sk-stat{{ quality.score < 60 ? ' is-alert' : (quality.score >= 80 ? ' is-good') }}">
+                    <span class="sk-stat-label">{{ "Quality score"|t('search-kit') }}</span>
+                    <span class="sk-stat-value">{{ quality.score|number_format(1) }}<small>/100</small></span>
+                    <span class="sk-stat-note">{{ "Over {count} searches"|t('search-kit', { count: quality.searches|number_format }) }}</span>
+                </li>
+                {% for name, component in quality.components %}
+                    <li class="sk-stat">
+                        <span class="sk-stat-label">{{ componentLabels[name] ?? name }}</span>
+                        <span class="sk-stat-value">{{ (component.value * 100)|number_format(1) }}%</span>
+                        <span class="sk-stat-note">{{ componentNotes[name] }} · {{ "weight {weight}"|t('search-kit', { weight: component.weight }) }}{% if name == 'engagement' and quality.engagementIsPartial() %} · {{ "over {count} searches"|t('search-kit', { count: quality.engagementSearches|number_format }) }}{% endif %}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+
+            <p class="light sk-hint">{{ "The score is the weighted mean of the parts above, out of 100. Success carries 0.5, engagement 0.3 and speed 0.2 — a deliberate product judgement, not a validated model: no data was fitted and no study stands behind the numbers. Speed judges each search by its own index’s slow threshold."|t('search-kit') }}
+                {% if quality.missingComponents is not empty %}
+                    {{ "Nothing was recorded about {parts}, so that part is left out and the remaining weights are shared out again."|t('search-kit', { parts: quality.missingComponents|map(part => componentLabels[part] ?? part)|join(', ') }) }}
+                {% endif %}
+                {% if quality.engagementIsPartial() %}
+                    {{ "Engagement covers the {tracked} of {total} searches whose index follows opened results; the others were never watched for them, so they are left out of that part rather than counted as searches nobody opened anything from."|t('search-kit', { tracked: quality.engagementSearches|number_format, total: quality.searches|number_format }) }}
+                {% endif %}
+            </p>
+        {% endif %}
+
+        <h2 class="sk-section-heading">{{ "What has changed"|t('search-kit') }}</h2>
+
+        {% if anomalies is empty %}
+            <p class="zilch">{{ "Nothing changed enough between the last {days} days and the {days} before them to be worth reporting."|t('search-kit', { days: windowDays }) }}</p>
+        {% else %}
+            <ul class="sk-cards">
+                {% for anomaly in anomalies %}
+                    <li class="sk-card">
+                        <span class="sk-card-type">{{ anomaly.type.label()|t('search-kit') }}</span>
+                        <p class="sk-card-reason">{{ anomaly.description }}</p>
+                        <p class="sk-card-note">{{ "Read from {recent} searches against {baseline} before them."|t('search-kit', { recent: anomaly.recentSearches|number_format, baseline: anomaly.baselineSearches|number_format }) }}</p>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <h2 class="sk-section-heading">{{ "Recommendations"|t('search-kit') }}</h2>
+
+        {% if recommendations is empty %}
+            <p class="zilch">{{ "Nothing in this period points at anything worth doing."|t('search-kit') }}</p>
+        {% else %}
+            <ul class="sk-cards">
+                {% for recommendation in recommendations %}
+                    <li class="sk-card">
+                        <span class="sk-card-type">{{ recommendation.type.label()|t('search-kit') }}</span>
+                        <h3 class="sk-card-subject">{{ recommendation.subject }}</h3>
+                        <p class="sk-card-reason">{{ recommendation.reason }}</p>
+                        <ul class="sk-evidence">
+                            {% for label, value in recommendation.evidence %}
+                                <li><span>{{ label|t('search-kit') }}</span><strong>{{ value }}</strong></li>
+                            {% endfor %}
+                        </ul>
+                        {% if recommendation.url %}
+                            <a class="btn small" href="{{ recommendation.url }}">{{ recommendation.type.label()|t('search-kit') }}</a>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <h2 class="sk-section-heading">{{ "How the wording reads"|t('search-kit') }}</h2>
+
+        <p class="light sk-hint">{{ "Covering the most-searched queries of the period, not every query in it."|t('search-kit') }}</p>
+
+        {% if intents is empty %}
+            <p class="zilch">{{ "Nothing has been searched for in this period."|t('search-kit') }}</p>
+        {% else %}
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Reading"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Searches"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for intent, searches in intents %}
+                        <tr>
+                            <th scope="row">{{ intentLabels[intent] ?? intent }}</th>
+                            <td class="rightalign">{{ searches|number_format }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <p class="light sk-hint">{{ "Read from cue words in the query itself — “how” and “guide” read as informational, “buy” and “delivery” as transactional, and so on. The cue words are English, so queries are only read against them where the site being counted is written in English. This describes the wording people use, nothing more, and it never affects a search."|t('search-kit') }}</p>
+        {% endif %}
+    {% endif %}
+{% endblock %}
+
+{% css %}
+    .sk-intro { margin-bottom: 14px; }
+    .sk-filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .sk-field { display: flex; flex-direction: column; gap: 5px; }
+    .sk-field-label { font-size: 12px; font-weight: 500; color: var(--medium-text-color); }
+    .sk-section-heading { margin: 26px 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--medium-text-color); }
+    .sk-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0 0 8px; padding: 0; list-style: none; }
+    .sk-stat { padding: 14px 16px; border: 1px solid var(--hairline-color); border-radius: var(--large-border-radius, 8px); background: var(--pane-bg, #fff); }
+    .sk-stat-label { display: block; font-size: 12px; font-weight: 500; color: var(--medium-text-color); }
+    .sk-stat-value { display: block; margin-top: 6px; font-size: 28px; font-weight: 600; line-height: 1.1; }
+    .sk-stat-value small { font-size: 14px; font-weight: 400; color: var(--light-text-color); }
+    .sk-stat-note { display: block; margin-top: 4px; font-size: 11px; color: var(--light-text-color); }
+    .sk-stat.is-alert .sk-stat-value { color: var(--red-500); }
+    .sk-stat.is-good .sk-stat-value { color: var(--green-600); }
+    .sk-hint { margin: 6px 0 0; font-size: 12px; }
+    .sk-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+    .sk-card { padding: 14px 16px; border: 1px solid var(--hairline-color); border-radius: var(--large-border-radius, 8px); background: var(--pane-bg, #fff); }
+    .sk-card-type { display: inline-block; padding: 2px 8px; border-radius: var(--border-radius); font-size: 11px; font-weight: 500; color: var(--medium-text-color); background: var(--gray-100); }
+    .sk-card-subject { margin: 8px 0 0; font-size: 15px; word-break: break-word; }
+    .sk-card-reason { margin: 8px 0 0; }
+    .sk-card-note { margin: 6px 0 0; font-size: 11px; color: var(--light-text-color); }
+    .sk-evidence { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 12px; }
+    .sk-evidence li { display: flex; gap: 6px; color: var(--medium-text-color); }
+    .sk-evidence strong { color: var(--text-color); }
+    .sk-card .btn { margin-top: 12px; }
+{% endcss %}

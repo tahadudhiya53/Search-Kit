@@ -25,6 +25,9 @@ class StubProvider extends SearchProvider
     public ?Throwable $failWith = null;
     public SearchResult $result;
 
+    /** @var SearchResult[] Answers for successive searches, for a test whose calls must differ. */
+    public array $results = [];
+
     public function init(): void
     {
         parent::init();
@@ -46,6 +49,6 @@ class StubProvider extends SearchProvider
         $this->receivedQueries[] = clone $query;
         $this->receivedIndex = $index;
 
-        return $this->result;
+        return array_shift($this->results) ?? $this->result;
     }
 }

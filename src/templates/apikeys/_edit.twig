@@ -1,0 +1,66 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = isNew ? "New API key"|t('search-kit') : "Edit API key"|t('search-kit') %}
+{% set fullPageForm = true %}
+{% set selectedSubnavItem = 'api-keys' %}
+{% set crumbs = [{ label: "API keys"|t('search-kit'), url: url('search-kit/api-keys') }] %}
+
+{% set indexOptions = [] %}
+{% for index in indexes %}
+    {% set indexOptions = indexOptions|merge([{ label: index.name, value: index.id }]) %}
+{% endfor %}
+
+{% block content %}
+    {{ actionInput('search-kit/api-keys/save') }}
+    {% if not isNew %}{{ hiddenInput('keyId', key.id) }}{% endif %}
+
+    {% if isNew %}
+        <div class="readable">
+            <p>{{ "The key itself is shown once, as soon as it is created. It is stored only as a digest, so it cannot be recovered afterwards."|t('search-kit') }}</p>
+        </div>
+    {% else %}
+        <div class="readable">
+            <p>{{ "This key starts with {prefix}. The key itself cannot be shown again — revoke it and create another one instead."|t('search-kit', { prefix: key.prefix }) }}</p>
+        </div>
+    {% endif %}
+
+    {{ forms.textField({
+        first: true,
+        label: "Name"|t('search-kit'),
+        id: 'name',
+        name: 'name',
+        value: key.name,
+        errors: key.getErrors('name'),
+        instructions: "What this key is for, so it can be recognized later."|t('search-kit'),
+        required: true,
+    }) }}
+
+    {{ forms.checkboxSelectField({
+        label: "Indexes"|t('search-kit'),
+        id: 'indexIds',
+        name: 'indexIds',
+        options: indexOptions,
+        values: key.indexIds,
+        errors: key.getErrors('indexIds'),
+        instructions: "Which indexes this key may search. Select none to allow every index."|t('search-kit'),
+    }) }}
+
+    {{ forms.textField({
+        label: "Rate limit"|t('search-kit'),
+        id: 'rateLimit',
+        name: 'rateLimit',
+        type: 'number',
+        value: key.rateLimit,
+        errors: key.getErrors('rateLimit'),
+        instructions: "Requests a minute this key may make. Leave blank for no limit."|t('search-kit'),
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: "Enabled"|t('search-kit'),
+        id: 'enabled',
+        name: 'enabled',
+        on: key.enabled,
+        instructions: "A disabled key is refused exactly as an unknown one is."|t('search-kit'),
+    }) }}
+{% endblock %}

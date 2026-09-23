@@ -19,6 +19,18 @@ class ParsedQuery extends Model
     /** @var string[] Words dropped as too common to narrow anything down. */
     public array $removedStopWords = [];
 
+    /**
+     * @var string[] The languages this text was read in — one per language the sites being searched
+     * are written in. More than one means no single language may be claimed for the search.
+     */
+    public array $languages = [];
+
+    /**
+     * @var string[] Expansions that hold in some of the sites being searched but not all of them,
+     * so applying them would have widened the search beyond the site they were written for.
+     */
+    public array $withheldSynonyms = [];
+
     /** @var bool Whether any term was replaced by a correction of it. */
     public bool $corrected = false;
 
@@ -48,11 +60,6 @@ class ParsedQuery extends Model
     public function setTerms(array $terms): void
     {
         $this->_terms = array_values($terms);
-    }
-
-    public function addTerm(QueryTerm $term): void
-    {
-        $this->_terms[] = $term;
     }
 
     /**
@@ -89,6 +96,15 @@ class ParsedQuery extends Model
         }
 
         return array_values(array_unique($tokens));
+    }
+
+    /**
+     * Whether the sites being searched are written in more than one language, which is what stops
+     * any one of them standing in for the search.
+     */
+    public function isMultiLingual(): bool
+    {
+        return count($this->languages) > 1;
     }
 
     public function isEmpty(): bool

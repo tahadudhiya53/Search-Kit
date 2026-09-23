@@ -107,7 +107,7 @@ class ElementSyncTest extends ContentTestCase
 
         // An unexpected provider exception is never shown verbatim; its detail belongs in the log.
         self::assertStringNotContainsString('secret', (string)$failed[0]->error);
-        self::assertStringContainsString('SearchKit log', (string)$failed[0]->error);
+        self::assertStringContainsString('Search Kit log', (string)$failed[0]->error);
 
         RecordingProvider::$indexingFailure = null;
         self::assertSame(1, $this->plugin()->getIndexing()->retryFailed($index));

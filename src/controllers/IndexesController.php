@@ -7,13 +7,14 @@ use craft\base\ElementInterface;
 use craft\web\Controller;
 use Tahadudhiya\SearchKit\base\SearchProviderInterface;
 use Tahadudhiya\SearchKit\enums\PartialMatchMode;
+use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\models\AnalyticsSettings;
 use Tahadudhiya\SearchKit\models\SearchableField;
 use Tahadudhiya\SearchKit\models\SearchIndex;
 use Tahadudhiya\SearchKit\models\SearchSettings;
 use Tahadudhiya\SearchKit\providers\CraftProvider;
 use Tahadudhiya\SearchKit\SearchKit;
-use yii\web\ForbiddenHttpException;
+use yii\base\Model;
 use yii\web\NotFoundHttpException;
 use yii\web\Response;
 
@@ -35,7 +36,7 @@ class IndexesController extends Controller
 
     public function actionIndex(): Response
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $indexes = $plugin->getIndexes()->getAllIndexes();
         $statuses = [];
 
@@ -53,7 +54,7 @@ class IndexesController extends Controller
 
     public function actionEdit(?int $indexId = null, ?SearchIndex $index = null): Response
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $index ??= $indexId !== null
             ? $plugin->getIndexes()->getIndexById($indexId)
             : new SearchIndex(['provider' => CraftProvider::class]);
@@ -75,17 +76,13 @@ class IndexesController extends Controller
             ];
         }
 
-        $providerOptions = [];
-
-        foreach ($plugin->getProviders()->getAllProviderTypes() as $providerType) {
-            /** @var class-string<SearchProviderInterface> $providerType */
-            $providerOptions[] = ['label' => $providerType::displayName(), 'value' => $providerType];
-        }
 
         return $this->renderTemplate('search-kit/_edit', [
             'index' => $index,
             'isNew' => $index->id === null,
-            'providerOptions' => $providerOptions,
+            'providerOptions' => $this->providerOptions(),
+            'providerSettings' => $this->providerSettingsForms($index),
+            'providerCapabilities' => $this->providerCapabilities(),
             'elementTypeGroups' => $elementTypeGroups,
             'partialMatchOptions' => $this->partialMatchOptions(),
             'status' => $index->id !== null ? $plugin->getIndexing()->getStatus($index) : null,
@@ -101,7 +98,7 @@ class IndexesController extends Controller
         $this->requirePostRequest();
         $this->requirePermission(SearchKit::PERMISSION_MANAGE);
 
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $request = $this->request;
         $indexId = $request->getBodyParam('indexId');
 
@@ -120,6 +117,12 @@ class IndexesController extends Controller
 
         $siteId = $request->getBodyParam('siteId');
         $index->siteId = $siteId !== null && $siteId !== '' ? (int)$siteId : null;
+
+        $index->settings = $this->resolveProviderSettings(
+            $request->getBodyParam('providerTypes', []),
+            $request->getBodyParam('providerSettings', []),
+            $index->provider,
+        );
 
         $index->setSearchSettings($this->resolveSearchSettings($request->getBodyParam('searchSettings')));
         $index->setAnalyticsSettings($this->resolveAnalyticsSettings($request->getBodyParam('analyticsSettings')));
@@ -144,7 +147,7 @@ class IndexesController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_MANAGE);
 
         $index = $this->requireIndex();
-        $this->plugin()->getIndexes()->deleteIndex($index);
+        SearchKit::instance()->getIndexes()->deleteIndex($index);
         $this->setSuccessFlash(Craft::t('search-kit', 'Search index deleted.'));
 
         return $this->redirect('search-kit/indexes');
@@ -156,7 +159,7 @@ class IndexesController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_REBUILD);
 
         $index = $this->requireIndex();
-        $this->plugin()->getIndexing()->queueRebuild($index);
+        SearchKit::instance()->getIndexing()->queueRebuild($index);
         $this->setSuccessFlash(Craft::t('search-kit', 'Rebuild queued.'));
 
         return $this->redirectToPostedUrl();
@@ -168,10 +171,119 @@ class IndexesController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_REBUILD);
 
         $index = $this->requireIndex();
-        $reset = $this->plugin()->getIndexing()->retryFailed($index);
+        $reset = SearchKit::instance()->getIndexing()->retryFailed($index);
         $this->setSuccessFlash(Craft::t('search-kit', '{count} operations queued for retry.', ['count' => $reset]));
 
         return $this->redirectToPostedUrl();
+    }
+
+    /**
+     * What each provider can do, so an index's behaviour is visible where it is chosen rather than
+     * only discovered when a search is refused.
+     *
+     * @return array<string,string[]>
+     */
+    private function providerCapabilities(): array
+    {
+        $capabilities = [];
+
+        foreach (SearchKit::instance()->getProviders()->getAllProviderTypes() as $providerType) {
+            /** @var class-string<SearchProviderInterface> $providerType */
+            $capabilities[$providerType] = array_map(
+                static fn(ProviderCapability $capability) => $capability->label(),
+                $providerType::capabilities(),
+            );
+        }
+
+        return $capabilities;
+    }
+
+    private function providerOptions(): array
+    {
+        return array_map(
+            /** @param class-string<SearchProviderInterface> $providerType */
+            static fn(string $providerType) => [
+                'label' => $providerType::displayName(),
+                'value' => $providerType,
+            ],
+            SearchKit::instance()->getProviders()->getAllProviderTypes(),
+        );
+    }
+
+    /**
+     * The settings form each provider asks for, namespaced so two providers cannot post over each
+     * other. A provider needing no settings contributes no form.
+     *
+     * @return array<array{type:string,html:string}>
+     */
+    private function providerSettingsForms(SearchIndex $index): array
+    {
+        $view = Craft::$app->getView();
+        $forms = [];
+
+        foreach (SearchKit::instance()->getProviders()->getAllProviderTypes() as $i => $providerType) {
+            // The chosen provider is built with what is saved, so the form shows the real settings.
+            $chosen = $providerType === $index->provider;
+            $provider = SearchKit::instance()->getProviders()->createProviderOfType($providerType, $chosen ? $index->settings : []);
+
+            // A save that failed comes back through here, so the provider re-reports which of its
+            // own settings were wrong rather than only the index saying that something was.
+            if ($chosen && $index->hasErrors('settings') && $provider instanceof Model) {
+                $provider->validate();
+            }
+
+            // Namespaced around the rendering rather than over the output: a settings field that
+            // builds its own input in JavaScript is only named correctly from inside the namespace.
+            $html = $view->namespaceInputs(
+                static fn() => (string)$provider->getSettingsHtml(),
+                "providerSettings[$i]",
+            );
+
+            if (trim($html) !== '') {
+                $forms[] = ['type' => $providerType, 'html' => $html];
+            }
+        }
+
+        return $forms;
+    }
+
+    /**
+     * The settings posted for the provider that was chosen, and nothing else. Element types travel
+     * as posted values rather than as array keys, so a class name never has to survive being used
+     * as an input name, and only a provider that is actually offered is read.
+     *
+     * @return array<string,mixed>
+     */
+    private function resolveProviderSettings(mixed $postedTypes, mixed $postedSettings, string $provider): array
+    {
+        if (!is_array($postedTypes) || !is_array($postedSettings)) {
+            return [];
+        }
+
+        $offered = SearchKit::instance()->getProviders()->getAllProviderTypes();
+
+        foreach ($postedTypes as $group => $type) {
+            if ($type !== $provider || !in_array($type, $offered, true)) {
+                continue;
+            }
+
+            $posted = $postedSettings[$group] ?? [];
+
+            if (!is_array($posted)) {
+                return [];
+            }
+
+            // Only what the provider declares as a setting, so nothing posted can reach it as an
+            // arbitrary property.
+            $allowed = array_flip(SearchKit::instance()->getProviders()->createProviderOfType($type)->settingsAttributes());
+
+            return array_filter(
+                array_intersect_key($posted, $allowed),
+                static fn(mixed $value) => is_scalar($value),
+            );
+        }
+
+        return [];
     }
 
     /**
@@ -226,7 +338,7 @@ class IndexesController extends Controller
             return [];
         }
 
-        $indexable = $this->plugin()->getSearchableFields()->getIndexableElementTypes();
+        $indexable = SearchKit::instance()->getSearchableFields()->getIndexableElementTypes();
         $fields = [];
 
         foreach ($postedTypes as $group => $elementType) {
@@ -272,7 +384,7 @@ class IndexesController extends Controller
     private function requireIndex(): SearchIndex
     {
         $indexId = (int)$this->request->getRequiredBodyParam('indexId');
-        $index = $this->plugin()->getIndexes()->getIndexById($indexId);
+        $index = SearchKit::instance()->getIndexes()->getIndexById($indexId);
 
         if ($index === null) {
             throw new NotFoundHttpException('Search index not found.');
@@ -289,16 +401,5 @@ class IndexesController extends Controller
     private function canRebuild(): bool
     {
         return Craft::$app->getUser()->checkPermission(SearchKit::PERMISSION_REBUILD);
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('SearchKit is not installed.');
-        }
-
-        return $plugin;
     }
 }

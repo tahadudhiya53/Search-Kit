@@ -15,7 +15,6 @@ use Tahadudhiya\SearchKit\records\SearchIndexRecord;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 use yii\db\Expression;
 
 /**
@@ -27,6 +26,8 @@ class Indexes extends Component
     private ?array $_indexes = null;
 
     private ?SearchableFields $_searchableFields = null;
+
+    private ?Providers $_providers = null;
 
     /**
      * @return SearchIndex[]
@@ -124,7 +125,9 @@ class Indexes extends Component
 
     public function saveIndex(SearchIndex $index, bool $runValidation = true): bool
     {
-        if ($runValidation && !$index->validate()) {
+        // The provider's own settings are validated with the index, since only the provider knows
+        // what it needs to reach its engine.
+        if ($runValidation && (!$index->validate() || !$this->getProviders()->validateSettings($index))) {
             return false;
         }
 
@@ -141,6 +144,10 @@ class Indexes extends Component
         // once it is asked. Without this a new index would report a generation it is not on.
         if ($record->getIsNewRecord()) {
             $record->loadDefaultValues();
+
+            // The uid column's default is a placeholder, and loading it would leave every index
+            // sharing one. Dropped so Craft assigns a real one.
+            unset($record->uid);
         }
 
         if ($this->handleIsTaken($index)) {
@@ -194,6 +201,10 @@ class Indexes extends Component
         $index->configurationVersion = (int)$record->configurationVersion;
         $this->_indexes = null;
 
+        // A provider built from the settings this save replaced must not go on serving the index
+        // for the rest of the request.
+        $this->getProviders()->forgetProvider($index);
+
         return true;
     }
 
@@ -218,8 +229,17 @@ class Indexes extends Component
 
     public function getSearchableFields(): SearchableFields
     {
-        return $this->_searchableFields ??= SearchKit::getInstance()?->getSearchableFields()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+        return $this->_searchableFields ??= SearchKit::instance()->getSearchableFields();
+    }
+
+    public function setProviders(Providers $providers): void
+    {
+        $this->_providers = $providers;
+    }
+
+    public function getProviders(): Providers
+    {
+        return $this->_providers ??= SearchKit::instance()->getProviders();
     }
 
     public function deleteIndex(SearchIndex $index): bool
@@ -237,6 +257,7 @@ class Indexes extends Component
         // Searchable fields are removed by the table's cascading foreign key.
         $deleted = (bool)$record->delete();
         $this->_indexes = null;
+        $this->getProviders()->forgetProvider($index);
 
         return $deleted;
     }

@@ -1,0 +1,553 @@
+{% extends "_layouts/cp" %}
+{% import "_includes/forms" as forms %}
+
+{% set title = "Debugger"|t('search-kit') %}
+{% set selectedSubnavItem = 'debug' %}
+
+{% set indexOptions = [] %}
+{% for option in indexes %}
+    {% set indexOptions = indexOptions|merge([{ label: option.name, value: option.handle }]) %}
+{% endfor %}
+
+{% set siteOptions = [{ label: "Everything the index covers"|t('search-kit'), value: '' }] %}
+{% for site in sites %}
+    {% set siteOptions = siteOptions|merge([{ label: site.name, value: site.id }]) %}
+{% endfor %}
+
+{% block content %}
+    <div class="readable">
+        <p>{{ "Runs a real search and shows what it did: how the query was read, what the provider was asked, which rules matched, and how every result was ranked. Nothing here is recorded as search activity."|t('search-kit') }}</p>
+    </div>
+
+    {% if indexes is empty %}
+        <p class="zilch">{{ "There are no search indexes to debug yet."|t('search-kit') }}</p>
+    {% else %}
+        <form method="get" accept-charset="UTF-8" class="sk-debug-form flex">
+            <div class="sk-field">
+                <span class="sk-field-label">{{ "Index"|t('search-kit') }}</span>
+                {{ forms.select({ name: 'index', options: indexOptions, value: handle }) }}
+            </div>
+
+            <div class="sk-field sk-field-wide">
+                <span class="sk-field-label">{{ "Search for"|t('search-kit') }}</span>
+                {{ forms.text({ name: 'q', value: text, placeholder: "Type a query"|t('search-kit'), autofocus: true }) }}
+            </div>
+
+            <div class="sk-field">
+                <span class="sk-field-label">{{ "Site"|t('search-kit') }}</span>
+                {{ forms.select({ name: 'siteId', options: siteOptions, value: siteId }) }}
+            </div>
+
+            <div class="sk-field">
+                <span class="sk-field-label">
+                    {{ "Status"|t('search-kit') }}
+                    <span class="info">{{ "Anything other than published content can only be searched by an administrator."|t('search-kit') }}</span>
+                </span>
+                {{ forms.text({ name: 'status', value: status, placeholder: "live"|t('search-kit'), size: 8 }) }}
+            </div>
+
+            <div class="sk-field">
+                <span class="sk-field-label">{{ "Results"|t('search-kit') }}</span>
+                {{ forms.text({ name: 'limit', value: limit, size: 4 }) }}
+            </div>
+
+            <div class="sk-field">
+                <button type="submit" class="btn submit">{{ "Run search"|t('search-kit') }}</button>
+            </div>
+        </form>
+    {% endif %}
+
+    {% if error %}
+        <div class="pane sk-error">
+            <h2>{{ "The search could not be run"|t('search-kit') }}</h2>
+            <p class="error">{{ error }}</p>
+        </div>
+    {% endif %}
+
+    {% if debug %}
+        <div class="pane">
+            <h2>{{ "Query"|t('search-kit') }}</h2>
+
+            <table class="data fullwidth sk-facts">
+                <tr>
+                    <th scope="row">{{ "Typed"|t('search-kit') }}</th>
+                    <td><code>{{ debug.originalRaw }}</code></td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Normalized"|t('search-kit') }}</th>
+                    <td><code>{{ debug.originalNormalized }}</code></td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        {{ "Searched for"|t('search-kit') }}
+                        <span class="info">{{ "What the provider was actually given, once stop words, operators, synonyms and any correction had been settled."|t('search-kit') }}</span>
+                    </th>
+                    <td><code>{{ debug.effectiveNormalized }}</code></td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Operators"|t('search-kit') }}</th>
+                    <td>{{ debug.operators ? "Read from the query text"|t('search-kit') : "Not read; every word is a plain term"|t('search-kit') }}</td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Stop words"|t('search-kit') }}</th>
+                    <td>
+                        {%- if debug.removedStopWords is empty -%}
+                            <span class="light">{{ "None removed"|t('search-kit') }}</span>
+                        {%- else -%}
+                            <code>{{ debug.removedStopWords|join(', ') }}</code>
+                        {%- endif -%}
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Typo correction"|t('search-kit') }}</th>
+                    <td>
+                        {%- if debug.correctedTo -%}
+                            {{ "Found nothing, so it was searched for as"|t('search-kit') }} <code>{{ debug.correctedTo }}</code>
+                        {%- elseif 'typoTolerance' in debug.capabilities -%}
+                            <span class="light">{{ "The provider corrects typos itself."|t('search-kit') }}</span>
+                        {%- else -%}
+                            <span class="light">{{ "Not applied. It only runs when a search returns nothing."|t('search-kit') }}</span>
+                        {%- endif -%}
+                    </td>
+                </tr>
+            </table>
+
+            <h3>{{ "Parsed terms the provider was given"|t('search-kit') }}</h3>
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Term"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Typed as"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Matching"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Also accepts"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for term in debug.terms %}
+                        <tr>
+                            <th scope="row"><code>{{ term.text }}</code></th>
+                            <td>{{ term.original != term.text ? term.original : '' }}</td>
+                            <td>
+                                {%- set traits = [] %}
+                                {%- if term.excluded %}{% set traits = traits|merge(["Excludes results"|t('search-kit')]) %}{% endif %}
+                                {%- if term.phrase %}{% set traits = traits|merge(["Phrase"|t('search-kit')]) %}{% endif %}
+                                {%- if term.exact %}{% set traits = traits|merge(["Whole word"|t('search-kit')]) %}{% endif %}
+                                {%- if term.corrected %}{% set traits = traits|merge(["Corrected"|t('search-kit')]) %}{% endif %}
+                                {%- if term.partial != 'off' %}
+                                    {%- set traits = traits|merge([(term.partial == 'prefix' ? "Prefix"|t('search-kit') : "Substring"|t('search-kit')) ~ (term.wildcard ? ' (*)' : '')]) %}
+                                {%- endif %}
+                                {%- if traits is empty -%}
+                                    <span class="light">{{ "Plain term"|t('search-kit') }}</span>
+                                {%- else -%}
+                                    {{ traits|join(', ') }}
+                                {%- endif -%}
+                            </td>
+                            <td>
+                                {%- if term.alternatives is empty -%}
+                                    <span class="light">&mdash;</span>
+                                {%- else -%}
+                                    <code>{{ term.alternatives|join(', ') }}</code>
+                                {%- endif -%}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pane">
+            <h2>{{ "Provider"|t('search-kit') }}</h2>
+
+            <table class="data fullwidth sk-facts">
+                <tr>
+                    <th scope="row">{{ "Provider"|t('search-kit') }}</th>
+                    <td>{{ debug.providerName }} <span class="light code">{{ debug.provider }}</span></td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Index"|t('search-kit') }}</th>
+                    <td>{{ debug.indexName }} <span class="light code">{{ debug.indexHandle }}</span></td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Site"|t('search-kit') }}</th>
+                    <td>{% if debug.siteIds %}{{ debug.siteIds|map(id => craft.app.sites.getSiteById(id).name ?? id)|join(', ') }}{% else %}{{ "Every site this index covers"|t('search-kit') }}{% endif %}</td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Read in"|t('search-kit') }}</th>
+                    <td>
+                        {{ debug.languages|join(', ') }}
+                        {%- if debug.languages|length > 1 %} — {{ "more than one language, so no single one is claimed for this search"|t('search-kit') }}{% endif -%}
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Element types"|t('search-kit') }}</th>
+                    <td><span class="code">{{ debug.elementTypes|join(', ') }}</span></td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Capabilities"|t('search-kit') }}</th>
+                    <td><span class="code">{{ debug.capabilities|join(', ') }}</span></td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Results"|t('search-kit') }}</th>
+                    <td>{{ "{count} in total, {shown} on this page"|t('search-kit', { count: result.total, shown: result.count }) }}</td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ "Took"|t('search-kit') }}</th>
+                    <td>{{ result.executionTime|number_format(2) }}ms</td>
+                </tr>
+            </table>
+
+            <h3>{{ "Field weights"|t('search-kit') }}</h3>
+            <p class="light">
+                {{- debug.weightsApplied
+                    ? "The provider ranks by these weights."|t('search-kit')
+                    : "This provider scores results itself and does not apply field weights. They decide what is indexed and which fields may be filtered on, not how a result ranks."|t('search-kit') -}}
+            </p>
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Element type"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Fields"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for elementType, weights in debug.fieldWeights %}
+                        <tr>
+                            <th scope="row"><span class="code">{{ elementType }}</span></th>
+                            <td>
+                                {%- set pairs = [] %}
+                                {%- for handle, weight in weights %}
+                                    {% set pairs = pairs|merge([handle ~ ' (' ~ weight ~ ')']) %}
+                                {%- endfor %}
+                                {{ pairs|join(', ') }}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <h3>{{ "Searches run"|t('search-kit') }}</h3>
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Why"|t('search-kit') }}</th>
+                        <th scope="col">{{ "Window"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Left out"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Returned"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Total"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Took"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for execution in debug.executions %}
+                        <tr>
+                            <th scope="row">
+                                {%- if execution.purpose == 'search' -%}{{ "The search"|t('search-kit') }}
+                                {%- elseif execution.purpose == 'correction' -%}{{ "Retried with a correction"|t('search-kit') }}
+                                {%- elseif execution.purpose == 'replan' -%}{{ "Re-run for the corrected query's rules"|t('search-kit') }}
+                                {%- else -%}{{ "Boosted or buried results, asked for by name"|t('search-kit') }}
+                                {%- endif -%}
+                            </th>
+                            <td class="code">{{ execution.offset }}&ndash;{{ execution.offset + execution.limit }}</td>
+                            <td class="rightalign">{{ execution.excluded }}</td>
+                            <td class="rightalign">{{ execution.returned }}</td>
+                            <td class="rightalign">{{ execution.total }}</td>
+                            <td class="rightalign nowrap">{{ execution.time|number_format(2) }}ms</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <details class="sk-raw">
+                <summary>{{ "What the provider reported about each request"|t('search-kit') }}</summary>
+                {% for execution in debug.executions %}
+                    <pre class="code">{{ execution.request|json_encode(constant('JSON_PRETTY_PRINT') b-or constant('JSON_UNESCAPED_SLASHES')) }}</pre>
+                {% endfor %}
+            </details>
+        </div>
+
+        <div class="pane">
+            <h2>{{ "Time"|t('search-kit') }}</h2>
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ "Stage"|t('search-kit') }}</th>
+                        <th scope="col" class="rightalign">{{ "Took"|t('search-kit') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stage, milliseconds in debug.timings %}
+                        <tr>
+                            <th scope="row">
+                                {%- if stage == 'setup' -%}{{ "Resolving the index and provider"|t('search-kit') }}
+                                {%- elseif stage == 'parse' -%}{{ "Reading the query"|t('search-kit') }}
+                                {%- elseif stage == 'rules' -%}{{ "Planning and applying rules"|t('search-kit') }}
+                                {%- elseif stage == 'provider' -%}{{ "Searching"|t('search-kit') }}
+                                {%- elseif stage == 'facets' -%}{{ "Counting results by field"|t('search-kit') }}
+                                {%- elseif stage == 'elements' -%}{{ "Loading and authorizing results"|t('search-kit') }}
+                                {%- elseif stage == 'highlighting' -%}{{ "Matched fields and excerpts"|t('search-kit') }}
+                                {%- else -%}{{ "Suggestions"|t('search-kit') }}
+                                {%- endif -%}
+                            </th>
+                            <td class="rightalign nowrap">{{ milliseconds|number_format(2) }}ms</td>
+                        </tr>
+                    {% endfor %}
+                    <tr>
+                        <th scope="row">{{ "Total"|t('search-kit') }}</th>
+                        <td class="rightalign nowrap"><strong>{{ debug.totalTime|number_format(2) }}ms</strong></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pane">
+            <h2>{{ "Rules"|t('search-kit') }}</h2>
+
+            {% if result.redirect %}
+                <p>{{ "This search is redirected to"|t('search-kit') }} <code>{{ result.redirect }}</code> {{ "by rule #{id}"|t('search-kit', { id: debug.plan.redirectRuleId }) }}</p>
+            {% endif %}
+
+            {% if result.rules is empty %}
+                <p class="zilch">{{ "No rules exist for this index."|t('search-kit') }}</p>
+            {% else %}
+                <p class="light">
+                    {{ "{matched} of {considered} rules matched. The page was read from {offset} for {limit} results."|t('search-kit', {
+                        matched: debug.plan.rulesMatched,
+                        considered: debug.plan.rulesConsidered,
+                        offset: debug.plan.windowOffset,
+                        limit: debug.plan.windowLimit,
+                    }) }}
+                    {% if debug.plan.reorderSkipped == 'customSort' %}
+                        {{ "Score adjustments were not applied because the search asked for its own ordering."|t('search-kit') }}
+                    {% elseif debug.plan.reorderSkipped == 'beyondReorderWindow' %}
+                        {{ "Score adjustments were not applied because this page lies beyond the reordering window."|t('search-kit') }}
+                    {% endif %}
+                </p>
+
+                <table class="data fullwidth">
+                    <thead>
+                        <tr>
+                            <th scope="col">{{ "Rule"|t('search-kit') }}</th>
+                            <th scope="col">{{ "Matched"|t('search-kit') }}</th>
+                            <th scope="col">{{ "Matches"|t('search-kit') }}</th>
+                            <th scope="col">{{ "Priority"|t('search-kit') }}</th>
+                            <th scope="col">{{ "Did"|t('search-kit') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for evaluation in result.rules %}
+                            <tr>
+                                <th scope="row">
+                                    <a href="{{ url('search-kit/rules/' ~ evaluation.ruleId) }}">{{ evaluation.ruleName }}</a>
+                                    <span class="light">#{{ evaluation.ruleId }}</span>
+                                </th>
+                                <td>
+                                    {%- if evaluation.matched -%}
+                                        <span class="sk-pill is-good">{{ "Yes"|t('search-kit') }}</span>
+                                    {%- else -%}
+                                        <span class="light">
+                                            {%- if evaluation.reason == 'disabled' -%}{{ "Disabled"|t('search-kit') }}
+                                            {%- elseif evaluation.reason == 'outOfSchedule' -%}{{ "Outside its schedule"|t('search-kit') }}
+                                            {%- else -%}{{ "Query does not match"|t('search-kit') }}
+                                            {%- endif -%}
+                                        </span>
+                                    {%- endif -%}
+                                </td>
+                                <td class="code">{{ evaluation.matchType }}: {{ evaluation.matchValue }}</td>
+                                <td>{{ evaluation.priority }}</td>
+                                <td>
+                                    {%- if evaluation.effects is empty -%}
+                                        <span class="light">&mdash;</span>
+                                    {%- else -%}
+                                        <ul class="sk-effects">
+                                            {% for effect in evaluation.effects %}
+                                                <li>
+                                                    <strong>{{ effect.action }}</strong>
+                                                    {%- if effect.elementId %} &rarr; #{{ effect.elementId }}{% endif -%}
+                                                    {%- if effect.amount is defined and effect.amount is not null %} ({{ effect.amount > 0 ? '+' }}{{ effect.amount }}){% endif -%}
+                                                    {%- if effect.position is defined and effect.position is not null %} {{ "at position {position}"|t('search-kit', { position: effect.position }) }}{% endif -%}
+                                                    {%- if effect.applied is defined and not effect.applied %}
+                                                        <span class="light">&mdash; {{ "not applied"|t('search-kit') }}: {{ effect.outcome }}</span>
+                                                    {%- elseif effect.outcome is defined and effect.outcome %}
+                                                        <span class="light">&mdash; {{ effect.outcome }}</span>
+                                                    {%- endif -%}
+                                                </li>
+                                            {% endfor %}
+                                        </ul>
+                                    {%- endif -%}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+
+        <div class="pane">
+            <h2>{{ "Results"|t('search-kit') }}</h2>
+
+            {% if debug.results is empty %}
+                <p class="zilch">{{ "This search returned nothing."|t('search-kit') }}</p>
+            {% else %}
+                {% for explanation in debug.results %}
+                    <details class="sk-result">
+                        <summary>
+                            <span class="sk-position">{{ explanation.position }}</span>
+                            <span class="sk-title">{{ explanation.title ?? ('#' ~ explanation.elementId) }}</span>
+                            {% if explanation.pinned %}<span class="sk-pill">{{ "Pinned"|t('search-kit') }}</span>{% endif %}
+                            {% if explanation.promoted %}<span class="sk-pill">{{ "Promoted"|t('search-kit') }}</span>{% endif %}
+                            {%- if explanation.rankedBy == 'pin' %}
+                                <span class="light">{{ "pinned at {position}"|t('search-kit', { position: explanation.pinnedPosition ?? explanation.position }) }}</span>
+                            {%- elseif explanation.rankedBy == 'promotion' %}
+                                <span class="light">{{ "promoted"|t('search-kit') }}</span>
+                            {%- else %}
+                                <span class="light">{{ "score"|t('search-kit') }} {{ explanation.finalScore|number_format(4) }}</span>
+                            {%- endif %}
+                        </summary>
+
+                        <table class="data fullwidth sk-facts">
+                            <tr>
+                                <th scope="row">{{ "Element"|t('search-kit') }}</th>
+                                <td>#{{ explanation.elementId }} <span class="light code">{{ explanation.elementType }}</span></td>
+                            </tr>
+                            <tr>
+                                <th scope="row">{{ "Site"|t('search-kit') }}</th>
+                                <td>{{ explanation.siteId ? (craft.app.sites.getSiteById(explanation.siteId).name ?? explanation.siteId) : '' }}</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">{{ "Matched in"|t('search-kit') }}</th>
+                                <td>
+                                    {%- if explanation.matchedFields is empty -%}
+                                        <span class="light">{{ "The provider did not say which fields matched."|t('search-kit') }}</span>
+                                    {%- else -%}
+                                        {%- set matched = [] %}
+                                        {%- for handle, weight in explanation.matchedFields %}
+                                            {% set matched = matched|merge([handle ~ (weight is not null ? ' (' ~ "weight"|t('search-kit') ~ ' ' ~ weight ~ ')' : '')]) %}
+                                        {%- endfor %}
+                                        {{ matched|join(', ') }}
+                                    {%- endif -%}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">{{ "Provider score"|t('search-kit') }}</th>
+                                <td>
+                                    {%- if explanation.hasProviderScore() -%}
+                                        {{ explanation.score|number_format(4) }}
+                                    {%- else -%}
+                                        <span class="light">{{ "None. A rule placed this result, so the provider never scored it."|t('search-kit') }}</span>
+                                    {%- endif -%}
+                                </td>
+                            </tr>
+                            {% if explanation.hasProviderScore() %}
+                                <tr>
+                                    <th scope="row">{{ "Rules moved it by"|t('search-kit') }}</th>
+                                    <td>
+                                        {%- if explanation.wasAdjusted() -%}
+                                            {{ explanation.scoreAdjustment > 0 ? '+' }}{{ explanation.scoreAdjustment|number_format(4) }}
+                                        {%- else -%}
+                                            <span class="light">{{ "Nothing"|t('search-kit') }}</span>
+                                        {%- endif -%}
+                                    </td>
+                                </tr>
+                            {% endif %}
+                            <tr>
+                                <th scope="row">{{ "Placed here by"|t('search-kit') }}</th>
+                                <td>
+                                    {%- if explanation.rankedBy == 'pin' -%}
+                                        <strong>{{ "A pin, at position {position}"|t('search-kit', { position: explanation.pinnedPosition ?? explanation.position }) }}</strong>
+                                    {%- elseif explanation.rankedBy == 'promotion' -%}
+                                        <strong>{{ "A promotion, above the ranked results"|t('search-kit') }}</strong>
+                                    {%- else -%}
+                                        <strong>{{ "Its score of {score}"|t('search-kit', { score: explanation.finalScore|number_format(4) }) }}</strong>
+                                        {{ "— the provider's own score plus what the rules moved it by."|t('search-kit') }}
+                                    {%- endif -%}
+                                </td>
+                            </tr>
+                            {% if explanation.ruleEffects is not empty %}
+                                <tr>
+                                    <th scope="row">{{ "Rules"|t('search-kit') }}</th>
+                                    <td>
+                                        <ul class="sk-effects">
+                                            {% for effect in explanation.ruleEffects %}
+                                                <li>
+                                                    <strong>{{ effect.action }}</strong>
+                                                    {%- if effect.ruleId is defined %} <a href="{{ url('search-kit/rules/' ~ effect.ruleId) }}">#{{ effect.ruleId }}</a>{% endif -%}
+                                                    {%- if effect.amount is defined %} ({{ effect.amount > 0 ? '+' }}{{ effect.amount }}){% endif -%}
+                                                    {%- if effect.position is defined %} {{ "at position {position}"|t('search-kit', { position: effect.position }) }}{% endif -%}
+                                                </li>
+                                            {% endfor %}
+                                        </ul>
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        </table>
+                    </details>
+                {% endfor %}
+            {% endif %}
+        </div>
+
+        <div class="pane">
+            <h2>{{ "Search Kit exclusions"|t('search-kit') }}</h2>
+            <p class="light">{{ "What Search Kit itself kept out of this search. A rule's target is listed because the rule removed it, not because this query would have matched it. Content the provider simply did not match is not listed here."|t('search-kit') }}</p>
+
+            {% if debug.exclusions is empty %}
+                <p class="zilch">{{ "Search Kit kept nothing out of this search."|t('search-kit') }}</p>
+            {% else %}
+                <table class="data fullwidth">
+                    <thead>
+                        <tr>
+                            <th scope="col">{{ "Element"|t('search-kit') }}</th>
+                            <th scope="col">{{ "Status"|t('search-kit') }}</th>
+                            <th scope="col">{{ "Why"|t('search-kit') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for excluded in debug.exclusions %}
+                            <tr>
+                                <th scope="row">
+                                    {{ excluded.title ?? ('#' ~ excluded.elementId) }}
+                                    <span class="light">#{{ excluded.elementId }}</span>
+                                </th>
+                                <td>
+                                    {%- if excluded.status -%}
+                                        <span class="status {{ excluded.status }}"></span>{{ excluded.status }}
+                                    {%- else -%}
+                                        <span class="light">{{ "Unknown"|t('search-kit') }}</span>
+                                    {%- endif -%}
+                                </td>
+                                <td>
+                                    {%- if excluded.reason == 'hiddenByRule' -%}
+                                        {{ "Kept out of the search by rule"|t('search-kit') }}
+                                        <a href="{{ url('search-kit/rules/' ~ excluded.ruleId) }}">#{{ excluded.ruleId }}</a>.
+                                        {{ "Whether this query would have matched it is not known: it was never searched for."|t('search-kit') }}
+                                    {%- elseif excluded.ruleId -%}
+                                        {{ "Placed by rule"|t('search-kit') }}
+                                        <a href="{{ url('search-kit/rules/' ~ excluded.ruleId) }}">#{{ excluded.ruleId }}</a>,
+                                        {{ "but it could not be shown in the site and status this search ran in."|t('search-kit') }}
+                                    {%- else -%}
+                                        {{ "Matched, but could not be shown in the site and status this search ran in."|t('search-kit') }}
+                                    {%- endif -%}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% css %}
+    .sk-debug-form { align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .sk-field-label { display: block; font-size: 12px; color: #596673; margin-bottom: 4px; }
+    .sk-field-wide { flex: 1 1 260px; }
+    .sk-facts th { width: 220px; }
+    .sk-effects { margin: 0; padding-left: 0; list-style: none; }
+    .sk-effects li { padding: 1px 0; }
+    .sk-pill { display: inline-block; padding: 1px 7px; border-radius: 9px; background: #e3e5e8; font-size: 11px; }
+    .sk-pill.is-good { background: #d7f0dd; }
+    .sk-result { border-bottom: 1px solid #e3e5e8; padding: 6px 0; }
+    .sk-result summary { cursor: pointer; display: flex; gap: 10px; align-items: center; }
+    .sk-position { display: inline-block; min-width: 24px; color: #596673; }
+    .sk-title { font-weight: 600; }
+    .sk-raw pre { max-height: 240px; overflow: auto; background: #f5f6f7; padding: 8px; }
+{% endcss %}

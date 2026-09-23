@@ -133,6 +133,79 @@ class SynonymsTest extends IntegrationTestCase
         self::assertSame([], $this->freshSynonyms()->expand('boots', $this->index, $siteId + 10000));
     }
 
+    public function testAGroupForOneSiteIsNotAppliedToASearchCoveringAnother(): void
+    {
+        [$first, $second] = $this->twoSites();
+        $this->save(['boots', 'footwear'], siteId: $first);
+
+        // Searching that site alone is what the group was written for.
+        self::assertSame(['footwear'], $this->freshSynonyms()->expandAcross(['boots'], $this->index, [$first]));
+
+        // Searching both would otherwise return results in the second site that a search of it
+        // alone never had, so the expansion is withheld and reported rather than applied.
+        $withheld = [];
+        self::assertSame(
+            [],
+            $this->freshSynonyms()->expandAcross(['boots'], $this->index, [$first, $second], $withheld),
+        );
+        self::assertSame(['footwear'], $withheld);
+    }
+
+    public function testAGroupCoveringEverySiteAppliesToASearchOfSeveral(): void
+    {
+        [$first, $second] = $this->twoSites();
+        $this->save(['boots', 'footwear']);
+
+        $withheld = [];
+
+        self::assertSame(
+            ['footwear'],
+            $this->freshSynonyms()->expandAcross(['boots'], $this->index, [$first, $second], $withheld),
+        );
+        self::assertSame([], $withheld);
+    }
+
+    public function testAGroupWrittenForEverySiteBeingSearchedStillApplies(): void
+    {
+        [$first, $second] = $this->twoSites();
+        $this->save(['boots', 'footwear'], siteId: $first);
+        $this->save(['boots', 'footwear'], siteId: $second);
+
+        // Each site says the same thing, so saying it for the search widens nothing.
+        self::assertSame(
+            ['footwear'],
+            $this->freshSynonyms()->expandAcross(['boots'], $this->index, [$first, $second]),
+        );
+    }
+
+    public function testEachSitesOwnReadingOfATermFindsItsOwnGroup(): void
+    {
+        [$first, $second] = $this->twoSites();
+        $this->save(['gruesse', 'hallo'], siteId: $first);
+        $this->save(['grusse', 'hallo'], siteId: $second);
+
+        // A word folds differently from one language to the next, so a term carries every reading
+        // and each site is asked with the one it holds.
+        self::assertSame(
+            ['hallo'],
+            $this->freshSynonyms()->expandAcross(['grusse', 'gruesse'], $this->index, [$first, $second]),
+        );
+    }
+
+    /**
+     * @return int[]
+     */
+    private function twoSites(): array
+    {
+        $siteIds = array_map('intval', Craft::$app->getSites()->getAllSiteIds(true));
+
+        if (count($siteIds) < 2) {
+            self::markTestSkipped('This project needs at least two sites.');
+        }
+
+        return [$siteIds[0], $siteIds[1]];
+    }
+
     /**
      * @param string[] $terms
      * @param string[] $replacements

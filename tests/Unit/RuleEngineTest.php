@@ -373,6 +373,27 @@ class RuleEngineTest extends TestCase
         self::assertSame('/support', $result->redirect);
     }
 
+    public function testASiteSpecificRedirectNeverSendsASearchNamingSeveralSites(): void
+    {
+        $this->rule(['siteId' => 1], [$this->redirect('/support')], $this->everySite);
+
+        $result = $this->search([[1, 10.0, 1], [2, 9.0, 3]], ['sites' => [1, 3]], index: $this->everySite);
+
+        // A list of sites is still more than the one the rule was written for.
+        self::assertNull($result->redirect);
+        self::assertSame('redirectNarrowerThanSearch', $result->rules[0]->effects[0]['outcome']);
+    }
+
+    public function testARuleCannotActOnASiteTheSearchDidNotName(): void
+    {
+        $this->rule(['siteId' => 3], [$this->hide(5)], $this->everySite);
+
+        $result = $this->search([[5, 10.0, 1]], ['sites' => [1, 2]], index: $this->everySite);
+
+        self::assertSame([5], $result->getElementIds());
+        self::assertSame('siteOutsideSearchScope', $result->rules[0]->effects[0]['outcome']);
+    }
+
     public function testARedirectFromARuleCoveringTheWholeIndexAlwaysApplies(): void
     {
         // The index covers one site, so a rule naming that site covers the whole search.
@@ -702,6 +723,29 @@ class RuleEngineTest extends TestCase
         self::assertSame(RulePlan::SKIPPED_BEYOND_WINDOW, $plan->reorderSkipped);
         self::assertFalse($plan->assembles);
         self::assertSame(RuleEngine::REORDER_LIMIT, $plan->windowOffset);
+    }
+
+    /**
+     * Giving up the reordering must not also give up assembling: a page reaching into the placed
+     * results still has to be built from the top, or the pins below it are read straight past.
+     */
+    public function testAPageInsideThePlacedResultsIsStillAssembledWhenReorderingIsGivenUp(): void
+    {
+        $this->rule([], [$this->pin(901, 9), $this->pin(902, 10), $this->boost(3, 100.0)]);
+
+        // Reaches past the reordering window, while the page itself sits inside the pinned results.
+        $query = SearchQuery::create('siteSearch', 'shoes', ['limit' => RuleEngine::REORDER_LIMIT, 'offset' => 1]);
+        $plan = $this->engine->plan($query, $this->index);
+
+        self::assertFalse($plan->reordered);
+        self::assertSame(RulePlan::SKIPPED_BEYOND_WINDOW, $plan->reorderSkipped);
+
+        self::assertTrue($plan->assembles, 'A page inside the placed results has to be assembled.');
+        self::assertSame(0, $plan->windowOffset);
+        self::assertSame(RuleEngine::REORDER_LIMIT + 1, $plan->windowLimit);
+
+        // Shifting by the placed count here would have asked the provider for a negative offset.
+        self::assertGreaterThanOrEqual(0, (int)$this->engine->windowQuery($query, $plan)->offset);
     }
 
     // ---------------------------------------------------------------- explanation

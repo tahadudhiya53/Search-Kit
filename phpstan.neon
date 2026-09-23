@@ -19,3 +19,15 @@ parameters:
         -
             identifier: staticMethod.alreadyNarrowedType
             path: tests/Unit/*
+
+        # The Commerce integration guards every Commerce class it touches, because Commerce is
+        # optional and those classes do not exist without it. Commerce is a dev dependency so the
+        # integration can be analysed and tested at all, which makes the guards look redundant to
+        # PHPStan while they are exactly what keeps SearchKit working without Commerce. Scoped to
+        # the one file that may name Commerce.
+        -
+            identifier: function.alreadyNarrowedType
+            path: src/services/Commerce.php
+        -
+            identifier: arrayValues.list
+            path: src/services/Commerce.php

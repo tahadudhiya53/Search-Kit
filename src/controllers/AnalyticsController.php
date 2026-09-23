@@ -3,16 +3,15 @@
 namespace Tahadudhiya\SearchKit\controllers;
 
 use Craft;
-use craft\web\Controller;
+use Tahadudhiya\SearchKit\base\InsightsController;
 use Tahadudhiya\SearchKit\models\InsightsCriteria;
 use Tahadudhiya\SearchKit\SearchKit;
-use yii\web\ForbiddenHttpException;
 use yii\web\Response;
 
 /**
  * Reads what has been searched for, and takes the click a result reports back.
  */
-class AnalyticsController extends Controller
+class AnalyticsController extends InsightsController
 {
     /** @var int Searches listed per page. */
     private const PAGE_SIZE = 50;
@@ -35,26 +34,12 @@ class AnalyticsController extends Controller
 
     public function actionIndex(): Response
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $criteria = InsightsCriteria::fromRequest($this->request->getQueryParams());
         $criteria->limit = self::PAGE_SIZE;
         $criteria->slowThreshold = $this->slowThreshold($criteria);
 
         $page = max(1, (int)$this->request->getQueryParam('page', 1));
-        $indexes = $plugin->getIndexes()->getAllIndexes();
-
-        // Names are resolved once here rather than per row, so a long list costs no more lookups.
-        $indexNames = [];
-
-        foreach ($indexes as $index) {
-            $indexNames[(int)$index->id] = $index->name;
-        }
-
-        $siteNames = [];
-
-        foreach (Craft::$app->getSites()->getAllSites(true) as $site) {
-            $siteNames[(int)$site->id] = $site->name;
-        }
 
         return $this->renderTemplate('search-kit/analytics/_index', [
             'criteria' => $criteria,
@@ -63,8 +48,8 @@ class AnalyticsController extends Controller
             'total' => $plugin->getInsights()->getSearchCount($criteria),
             'page' => $page,
             'pageSize' => self::PAGE_SIZE,
-            'indexNames' => $indexNames,
-            'siteNames' => $siteNames,
+            'indexNames' => $this->indexNames(),
+            'siteNames' => $this->siteNames(),
             'canManage' => Craft::$app->getUser()->checkPermission(SearchKit::PERMISSION_MANAGE_INSIGHTS),
         ]);
     }
@@ -78,7 +63,7 @@ class AnalyticsController extends Controller
     {
         $this->requirePostRequest();
 
-        $recorded = $this->plugin()->getAnalytics()->recordClick(
+        $recorded = SearchKit::instance()->getAnalytics()->recordClick(
             (string)$this->request->getRequiredBodyParam('token'),
             (int)$this->request->getRequiredBodyParam('elementId'),
             (int)$this->request->getRequiredBodyParam('siteId'),
@@ -98,38 +83,12 @@ class AnalyticsController extends Controller
         $this->requirePermission(SearchKit::PERMISSION_MANAGE_INSIGHTS);
 
         $indexId = $this->request->getBodyParam('indexId');
-        $deleted = $this->plugin()->getAnalytics()->clear(
+        $deleted = SearchKit::instance()->getAnalytics()->clear(
             $indexId !== null && $indexId !== '' ? (int)$indexId : null,
         );
 
         $this->setSuccessFlash(Craft::t('search-kit', '{count} recorded searches deleted.', ['count' => $deleted]));
 
         return $this->redirect('search-kit/analytics');
-    }
-
-    /**
-     * What counts as slow. One index is measured against its own setting; a reading covering several
-     * has no one setting to use, so the default stands.
-     */
-    private function slowThreshold(InsightsCriteria $criteria): int
-    {
-        if ($criteria->indexId === null) {
-            return $criteria->slowThreshold;
-        }
-
-        $index = $this->plugin()->getIndexes()->getIndexById($criteria->indexId);
-
-        return $index?->getAnalyticsSettings()->slowThreshold ?? $criteria->slowThreshold;
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new ForbiddenHttpException('SearchKit is not installed.');
-        }
-
-        return $plugin;
     }
 }
