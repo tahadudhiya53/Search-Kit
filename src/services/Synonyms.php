@@ -12,7 +12,6 @@ use Tahadudhiya\SearchKit\models\Synonym;
 use Tahadudhiya\SearchKit\records\SynonymRecord;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * The words a search treats as the same thing. Every search reads these, so they are cached rather
@@ -82,7 +81,7 @@ class Synonyms extends Component
     }
 
     /**
-     * What else a term should be searched for, drawn from every group that covers it.
+     * What else a term should be searched for in one site, drawn from every group that covers it.
      *
      * @return string[]
      */
@@ -100,13 +99,72 @@ class Synonyms extends Component
     }
 
     /**
+     * What a term may be widened to across every site a search covers. A search is one search, so
+     * an expansion may only be applied where it holds in all of them: a group written for one site
+     * would otherwise reach the others, and return results a search of those sites alone never had.
+     *
+     * @param string[] $texts The term, in each form the languages of those sites reduce it to.
+     * @param int[]|null $siteIds The sites the search covers, or null for every site the index does.
+     * @param string[] $withheld Filled with the expansions that hold in some of those sites but not all.
+     * @return string[]
+     */
+    public function expandAcross(array $texts, SearchIndex $index, ?array $siteIds, array &$withheld = []): array
+    {
+        $sites = $this->sitesInScope($index, $siteIds);
+        $shared = null;
+        $seen = [];
+
+        foreach ($sites as $siteId) {
+            $expansions = [];
+
+            // Each site reads the term in its own language's form, so a group written there is
+            // found whichever way the query folded.
+            foreach ($texts as $text) {
+                $expansions = [...$expansions, ...$this->expand($text, $index, $siteId)];
+            }
+
+            $expansions = array_values(array_unique(array_diff($expansions, $texts)));
+            $seen = [...$seen, ...$expansions];
+            $shared = $shared === null ? $expansions : array_intersect($shared, $expansions);
+        }
+
+        $shared = array_values($shared ?? []);
+        $withheld = array_values(array_unique(array_diff($seen, $shared)));
+
+        return $shared;
+    }
+
+    /**
+     * The concrete sites a search covers: the ones it named, or the ones its index does.
+     *
+     * @param int[]|null $siteIds
+     * @return int[]
+     */
+    protected function sitesInScope(SearchIndex $index, ?array $siteIds): array
+    {
+        if ($siteIds !== null && $siteIds !== []) {
+            return array_values(array_unique(array_map('intval', $siteIds)));
+        }
+
+        if ($index->siteId !== null) {
+            return [$index->siteId];
+        }
+
+        return array_map('intval', Craft::$app->getSites()->getAllSiteIds(true));
+    }
+
+    /**
      * Words are normalized before they are stored, so a search compares like with like rather than
      * failing to match a synonym over a capital letter or an accent.
      */
     public function saveSynonym(Synonym $synonym, bool $runValidation = true): bool
     {
-        $synonym->terms = $this->normalizeWords($synonym->terms);
-        $synonym->replacements = $this->normalizeWords($synonym->replacements);
+        // Read in the language of the site the synonym is written for, so it is held in the same
+        // form a query searching that site reduces to.
+        $language = $this->getNormalization()->siteLanguage($synonym->siteId);
+
+        $synonym->terms = $this->normalizeWords($synonym->terms, $language);
+        $synonym->replacements = $this->normalizeWords($synonym->replacements, $language);
 
         if ($runValidation && !$synonym->validate()) {
             return false;
@@ -194,14 +252,14 @@ class Synonyms extends Component
      * @param string[] $words
      * @return string[]
      */
-    private function normalizeWords(array $words): array
+    private function normalizeWords(array $words, ?string $language = null): array
     {
         $normalized = [];
 
         foreach ($words as $word) {
             // A multi-word entry stays as it is: a synonym may be a phrase, and the pipeline
             // matches one against the query the same way it matches a single word.
-            $value = $this->getNormalization()->normalize($word);
+            $value = $this->getNormalization()->normalize($word, $language);
 
             if ($value !== '') {
                 $normalized[] = $value;
@@ -236,17 +294,11 @@ class Synonyms extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 
     private function getIndexes(): Indexes
     {
-        return $this->plugin()->getIndexes();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+        return SearchKit::instance()->getIndexes();
     }
 }

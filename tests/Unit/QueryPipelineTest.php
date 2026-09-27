@@ -16,6 +16,7 @@ use Tahadudhiya\SearchKit\providers\CraftProvider;
 use Tahadudhiya\SearchKit\services\Normalization;
 use Tahadudhiya\SearchKit\services\QueryPipeline;
 use Tahadudhiya\SearchKit\services\StopWords;
+use Tahadudhiya\SearchKit\Tests\Support\FixedLanguages;
 use Tahadudhiya\SearchKit\Tests\Support\StubProvider;
 use Tahadudhiya\SearchKit\Tests\Support\StubSynonyms;
 
@@ -210,6 +211,251 @@ class QueryPipelineTest extends TestCase
 
         self::assertSame(['the', 'and', 'of'], $parsed->getTokens());
         self::assertSame([], $parsed->removedStopWords);
+    }
+
+    // --------------------------------------------------------------- more than one language
+
+    public function testEachLanguageBeingSearchedReadsTheTextForItself(): void
+    {
+        $parsed = $this->multiLingual()->parse(
+            SearchQuery::create('siteSearch', 'grüße', ['sites' => [1, 3]]),
+            $this->index,
+            $this->provider,
+        );
+
+        self::assertSame(['en-US', 'de-DE'], $parsed->languages);
+        self::assertTrue($parsed->isMultiLingual());
+
+        // German folds the word one way and English another, and each site's content was indexed
+        // in its own — so both readings are accepted rather than one standing in for the other.
+        self::assertSame('grusse', $parsed->getTerms()[0]->text);
+        self::assertSame(['grusse', 'gruesse'], $parsed->getTerms()[0]->getTexts());
+    }
+
+    public function testALanguagesAgreeingOnAWordLeaveItAsOneTerm(): void
+    {
+        $parsed = $this->multiLingual()->parse(
+            SearchQuery::create('siteSearch', 'boots', ['sites' => [1, 3]]),
+            $this->index,
+            $this->provider,
+        );
+
+        self::assertSame(['boots'], $parsed->getTerms()[0]->getTexts());
+        self::assertFalse($parsed->hasAlternatives());
+    }
+
+    public function testAProviderThatCannotAcceptBothReadingsIsRefused(): void
+    {
+        $provider = new StubProvider();
+        $provider->supported = array_values(array_filter(
+            CraftProvider::capabilities(),
+            static fn(ProviderCapability $capability) => $capability !== ProviderCapability::TermAlternation,
+        ));
+
+        // Running one reading and calling it the other would search a site for a word it does not
+        // hold, so the search is refused instead.
+        $this->expectException(UnsupportedCapabilityException::class);
+        $this->multiLingual()->parse(
+            SearchQuery::create('siteSearch', 'grüße', ['sites' => [1, 3]]),
+            $this->index,
+            $provider,
+        );
+    }
+
+    public function testTheBuiltInStopWordsAreNotAppliedToASearchThatIsNotAllEnglish(): void
+    {
+        $settings = $this->index->getSearchSettings();
+        $settings->customStopWords = ['bitte'];
+
+        $mixed = $this->multiLingual()->parse(
+            SearchQuery::create('siteSearch', 'the was bitte boots', ['sites' => [1, 3]]),
+            $this->index,
+            $this->provider,
+        );
+
+        // “Was” narrows a German query, so the English list is not applied to a search covering both.
+        self::assertContains('was', array_map(static fn(QueryTerm $t) => $t->text, $mixed->getTerms()));
+        self::assertContains('the', array_map(static fn(QueryTerm $t) => $t->text, $mixed->getTerms()));
+
+        // A word somebody configured is theirs, whatever language the search is read in.
+        self::assertSame(['bitte'], $mixed->removedStopWords);
+
+        $english = $this->multiLingual()->parse(
+            SearchQuery::create('siteSearch', 'the was bitte boots', ['sites' => [1]]),
+            $this->index,
+            $this->provider,
+        );
+
+        self::assertEqualsCanonicalizing(['bitte', 'the', 'was'], $english->removedStopWords);
+    }
+
+    public function testOnlyTheSynonymsHoldingInEverySiteBeingSearchedAreApplied(): void
+    {
+        $this->synonyms->sites = [1, 3];
+        $this->synonyms->expansionsBySite = [
+            1 => ['boots' => ['footwear', 'wellies'], 'grusse' => ['hallo']],
+            3 => ['boots' => ['footwear'], 'gruesse' => ['hallo']],
+        ];
+
+        $pipeline = $this->multiLingual();
+
+        $parsed = $pipeline->parse(
+            SearchQuery::create('siteSearch', 'boots', ['sites' => [1, 3]]),
+            $this->index,
+            $this->provider,
+        );
+
+        // “Wellies” was written for one site alone, so applying it would have returned results in
+        // the other that a search of it alone never had.
+        self::assertSame(['boots', 'footwear'], $parsed->getTerms()[0]->getTexts());
+        self::assertSame(['wellies'], $parsed->withheldSynonyms);
+
+        // Each site is asked with its own reading of the word, so a group written in either is found.
+        $greeting = $pipeline->parse(
+            SearchQuery::create('siteSearch', 'grüße', ['sites' => [1, 3]]),
+            $this->index,
+            $this->provider,
+        );
+
+        self::assertContains('hallo', $greeting->getTerms()[0]->getTexts());
+    }
+
+    public function testASearchOfOneSiteStillGetsThatSitesOwnSynonyms(): void
+    {
+        $this->synonyms->sites = [1, 3];
+        $this->synonyms->expansionsBySite = [
+            1 => ['boots' => ['wellies']],
+            3 => ['boots' => ['stiefel']],
+        ];
+
+        foreach ([[1, 'wellies'], [3, 'stiefel']] as [$siteId, $expected]) {
+            $parsed = $this->multiLingual()->parse(
+                SearchQuery::create('siteSearch', 'boots', ['sites' => [$siteId]]),
+                $this->index,
+                $this->provider,
+            );
+
+            self::assertSame(['boots', $expected], $parsed->getTerms()[0]->getTexts());
+            self::assertSame([], $parsed->withheldSynonyms);
+        }
+    }
+
+    public function testASearchWhoseLanguagesReadTheTextDifferentlyIsRefused(): void
+    {
+        // Craft reads the Cyrillic hard sign as a word in English and as nothing in Russian, so
+        // “boots ъ” is two words to one site and one word to the other.
+        $this->index->getSearchSettings()->operators = false;
+
+        try {
+            $this->multiLingual(3, 'ru')->parse(
+                SearchQuery::create('siteSearch', 'boots ъ', ['sites' => [1, 3]]),
+                $this->index,
+                $this->provider,
+            );
+            self::fail('A query the languages do not read as the same words should be refused.');
+        } catch (InvalidQueryException $e) {
+            self::assertArrayHasKey('text', $e->getErrors());
+            self::assertStringContainsString('en-US', $e->getErrors()['text'][0]);
+            self::assertStringContainsString('ru', $e->getErrors()['text'][0]);
+        }
+    }
+
+    public function testAWordOneLanguageReadsAsNothingIsRefusedRatherThanReadAsTheOthers(): void
+    {
+        // The same disagreement with operators on, where each word is read on its own: running the
+        // English reading would search the Russian site for a word nobody typed.
+        $this->expectException(InvalidQueryException::class);
+        $this->multiLingual(3, 'ru')->parse(
+            SearchQuery::create('siteSearch', 'boots ъ', ['sites' => [1, 3]]),
+            $this->index,
+            $this->provider,
+        );
+    }
+
+    public function testLanguagesThatReadTheTextAsTheSameWordsAreStillRun(): void
+    {
+        $this->index->getSearchSettings()->operators = false;
+
+        $parsed = $this->multiLingual()->parse(
+            SearchQuery::create('siteSearch', 'grüße boots', ['sites' => [1, 3]]),
+            $this->index,
+            $this->provider,
+        );
+
+        // Both languages make two words of it, so each word keeps every reading of itself.
+        self::assertSame(['grusse', 'gruesse'], $parsed->getTerms()[0]->getTexts());
+        self::assertSame(['boots'], $parsed->getTerms()[1]->getTexts());
+    }
+
+    public function testASearchOfSitesSharingALanguageIsReadOnceAndNeverRefused(): void
+    {
+        foreach ([true, false] as $operators) {
+            $this->index->getSearchSettings()->operators = $operators;
+
+            // Both sites are written in the same language, so there is nothing to disagree about —
+            // not even over a word one other language would read differently.
+            $parsed = $this->multiLingual(3, 'en-US')->parse(
+                SearchQuery::create('siteSearch', 'boots ъ', ['sites' => [1, 3]]),
+                $this->index,
+                $this->provider,
+            );
+
+            self::assertSame(['en-US'], $parsed->languages);
+            self::assertSame(['boots', 'ie'], array_map(static fn(QueryTerm $t) => $t->text, $parsed->getTerms()));
+        }
+    }
+
+    public function testASearchOfOneSiteIsNeverRefusedOverAnotherSitesLanguage(): void
+    {
+        foreach ([true, false] as $operators) {
+            $this->index->getSearchSettings()->operators = $operators;
+
+            $parsed = $this->multiLingual(3, 'ru')->parse(
+                SearchQuery::create('siteSearch', 'boots ъ', ['sites' => [3]]),
+                $this->index,
+                $this->provider,
+            );
+
+            self::assertSame(['ru'], $parsed->languages);
+            self::assertSame(['boots'], array_map(static fn(QueryTerm $t) => $t->text, $parsed->getTerms()));
+        }
+    }
+
+    /**
+     * A pipeline whose sites are written in different languages, which this project's are not.
+     */
+    private function multiLingual(int $siteId = 3, string $language = 'de-DE'): QueryPipeline
+    {
+        $normalization = new FixedLanguages(['languages' => [1 => 'en-US', $siteId => $language]]);
+
+        $stopWords = new StopWords();
+        $stopWords->setNormalization($normalization);
+
+        $pipeline = new QueryPipeline();
+        $pipeline->setNormalization($normalization);
+        $pipeline->setStopWords($stopWords);
+        $pipeline->setSynonyms($this->synonyms);
+
+        return $pipeline;
+    }
+
+    public function testTheBuiltInStopWordsOnlyApplyToAnEnglishQuery(): void
+    {
+        $stopWords = new StopWords();
+        $stopWords->setNormalization(new Normalization(['language' => 'en-US']));
+
+        $settings = new SearchSettings();
+        $settings->customStopWords = ['bitte'];
+
+        self::assertTrue($stopWords->isStopWord('the', $settings, 'en-GB'));
+
+        // “Die” and “was” narrow a German query down; the built-in list is English and says nothing
+        // about that, so it is not applied.
+        self::assertFalse($stopWords->isStopWord('the', $settings, 'de-DE'));
+        self::assertFalse($stopWords->isStopWord('was', $settings, 'de-DE'));
+
+        // A word somebody configured is theirs, whatever language the search is read in.
+        self::assertTrue($stopWords->isStopWord('bitte', $settings, 'de-DE'));
     }
 
     public function testStopWordsCanBeTurnedOffAndAddedTo(): void

@@ -17,6 +17,7 @@ use Tahadudhiya\SearchKit\errors\UnsupportedCapabilityException;
 use Tahadudhiya\SearchKit\events\SearchEvent;
 use Tahadudhiya\SearchKit\models\ParsedQuery;
 use Tahadudhiya\SearchKit\models\RulePlan;
+use Tahadudhiya\SearchKit\models\SearchDebug;
 use Tahadudhiya\SearchKit\models\SearchFilter;
 use Tahadudhiya\SearchKit\models\SearchHit;
 use Tahadudhiya\SearchKit\models\SearchIndex;
@@ -25,7 +26,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Runs a search query through the index's provider and returns a normalized result.
@@ -55,6 +55,7 @@ class Search extends Component
             throw new InvalidQueryException('The search query is not valid.', $query->getErrors());
         }
 
+        $debug = $query->getDebug();
         $index = $this->resolveIndex($query->indexHandle);
         $this->getSearchableFields()->attachFields($index);
 
@@ -65,16 +66,26 @@ class Search extends Component
         $provider = $this->getProviders()->getProviderForIndex($index);
         $this->assertProviderCanRun($query, $provider);
 
+        $debug?->readIndex($index, $query->getSiteScope($index->siteId));
+        $debug?->readProvider($provider);
+        $debug?->mark('setup');
+
         // Everything the query text means is settled here, so a provider is only ever handed terms.
         $parsed = $this->getQueryPipeline()->parse($query, $index, $provider);
         $this->assertQueryHasTerms($parsed);
         $query->setParsedQuery($parsed);
+
+        // Read before the search runs, so what was typed is kept whatever a correction goes on to
+        // search for instead.
+        $debug?->readOriginalQuery($parsed, $index->getSearchSettings()->operators);
+        $debug?->mark('parse');
 
         // Settled before the search runs: the rules decide which results the provider must leave
         // out and how wide a window the page is read in, neither of which it can be told afterwards.
         $plan = $this->getRuleEngine()->plan($query, $index);
         $this->assertProviderCanExclude($plan, $provider);
         $execution = $this->getRuleEngine()->windowQuery($query, $plan);
+        $debug?->mark('rules');
 
         $this->trigger(self::EVENT_BEFORE_SEARCH, new SearchEvent([
             'query' => $query,
@@ -82,7 +93,7 @@ class Search extends Component
         ]));
 
         $startedAt = hrtime(true);
-        $result = $this->execute($execution, $index, $provider);
+        $result = $this->execute($execution, $index, $provider, SearchDebug::PURPOSE_SEARCH);
         $result = $this->correctAndRetry($result, $execution, $index, $provider, $plan);
 
         // A correction happened to the query that ran, and everything downstream reads the terms
@@ -101,10 +112,21 @@ class Search extends Component
         $result->offset = $query->offset;
         $result->parsedQuery = $query->getParsedQuery();
 
+        $debug?->readEffectiveQuery($query->getParsedQuery());
+        $debug?->mark('provider');
+
         $this->normalizeHitSites($result, $query, $index);
+
+        // Counted over the search rather than the page, and before the rules rearrange anything: a
+        // facet describes every result the query matched.
+        $result->facets = $this->countFacets($query, $index, $provider, $plan);
+        $debug?->mark('facets');
+
         $this->getRuleEngine()->apply($result, $plan, $query, $execution, $index, $this->fetchAdjusted($plan, $query, $index, $provider));
+        $debug?->mark('rules');
         $this->hydrateElements($result, $query);
         $this->assertResultsAreViewable($result, $query, $index);
+        $debug?->mark('elements');
 
         // A result a rule placed is loaded and authorized like every other one, so one the viewer
         // may not see has already been dropped. This settles the explanation with it, rather than
@@ -117,7 +139,12 @@ class Search extends Component
             $this->getHighlighting()->apply($result, $query, $index);
         }
 
+        $debug?->mark('highlighting');
         $this->suggestAlternatives($result, $query, $index);
+        $debug?->mark('suggestions');
+
+        $debug?->explain($result, $plan, $index);
+        $result->debug = $debug;
 
         $this->trigger(self::EVENT_AFTER_SEARCH, new SearchEvent([
             'query' => $query,
@@ -144,7 +171,7 @@ class Search extends Component
             $index,
             $query->text,
             $limit ?? $index->getSearchSettings()->suggestionLimit,
-            $query->siteId,
+            $query->getSiteScope($index->siteId),
         );
     }
 
@@ -172,7 +199,7 @@ class Search extends Component
         return $this->getSuggestions()->forQuery(
             $parsed,
             $index,
-            $query->siteId,
+            $query->getSiteScope($index->siteId),
             $limit ?? $index->getSearchSettings()->suggestionLimit,
         );
     }
@@ -180,10 +207,27 @@ class Search extends Component
     /**
      * @throws ProviderException
      */
-    private function execute(SearchQuery $query, SearchIndex $index, SearchProviderInterface $provider): SearchResult
-    {
+    private function execute(
+        SearchQuery $query,
+        SearchIndex $index,
+        SearchProviderInterface $provider,
+        string $purpose,
+    ): SearchResult {
+        $debug = $query->getDebug();
+        $startedAt = hrtime(true);
+
         try {
-            return $provider->search($query, $index);
+            $result = $provider->search($query, $index);
+            $debug?->recordExecution(
+                $purpose,
+                $query,
+                $result,
+                (hrtime(true) - $startedAt) / 1_000_000,
+                // Only what this provider declares safe to show: its metadata is never shown raw.
+                $provider->diagnostics($result->metadata),
+            );
+
+            return $result;
         } catch (SearchKitException $e) {
             throw $e;
         } catch (Throwable $e) {
@@ -213,14 +257,14 @@ class Search extends Component
         }
 
         $original = $query->getParsedQuery();
-        $corrected = $this->getSuggestions()->correct($original, $index, $query->siteId);
+        $corrected = $this->getSuggestions()->correct($original, $index, $query->getSiteScope($index->siteId));
 
         if ($corrected === null) {
             return $result;
         }
 
         $query->setParsedQuery($corrected);
-        $retried = $this->execute($query, $index, $provider);
+        $retried = $this->execute($query, $index, $provider, SearchDebug::PURPOSE_CORRECTION);
 
         if ($retried->total === 0) {
             // The correction was no better, so the search stands as it was asked.
@@ -259,7 +303,7 @@ class Search extends Component
         }
 
         $corrected = $result->correctedText;
-        $retried = $this->execute($planned, $index, $provider);
+        $retried = $this->execute($planned, $index, $provider, SearchDebug::PURPOSE_REPLAN);
         $retried->correctedText = $corrected;
 
         return [$plan, $planned, $retried];
@@ -293,8 +337,8 @@ class Search extends Component
 
         // One element answers once per site, so a search covering several needs room for each of
         // them: asking for one row per result would leave the wanted site's copy outside the probe.
-        $scoped = ($query->siteId ?? $index->siteId) !== null;
-        $perElement = $scoped ? 1 : $this->scopeSiteCount();
+        $scope = $query->getSiteScope($index->siteId);
+        $perElement = $scope !== null ? count($scope) : $this->scopeSiteCount();
 
         $hits = [];
 
@@ -350,10 +394,45 @@ class Search extends Component
         $probe->setParsedQuery($query->getParsedQuery());
         $probe->addFilter(SearchFilter::make('id', FilterOperator::In, $ids));
 
-        $found = $this->execute($probe, $index, $provider);
+        $found = $this->execute($probe, $index, $provider, SearchDebug::PURPOSE_ADJUSTED);
         $this->normalizeHitSites($found, $query, $index);
 
         return $found->hits;
+    }
+
+    /**
+     * How the result set divides up by each field the search asked to be counted by. Only the
+     * results a rule hides are left out: one a rule pins or promotes is still a result, so counting
+     * it where the provider placed it is the only honest answer.
+     *
+     * @return \Tahadudhiya\SearchKit\models\Facet[]
+     * @throws ProviderException
+     */
+    private function countFacets(
+        SearchQuery $query,
+        SearchIndex $index,
+        SearchProviderInterface $provider,
+        RulePlan $plan,
+    ): array {
+        if (!$query->hasFacets()) {
+            return [];
+        }
+
+        $counted = clone $query;
+        $counted->setParsedQuery($query->getParsedQuery());
+
+        foreach ($plan->hidden as $target) {
+            $counted->excludeElement($target['elementId'], $target['siteId']);
+        }
+
+        try {
+            return $provider->facets($counted, $index);
+        } catch (SearchKitException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            Craft::error("Counting “{$index->handle}” failed: {$e->getMessage()}", SearchKit::LOG_CATEGORY);
+            throw new ProviderException("The “{$index->name}” search index could not be counted.", 0, $e);
+        }
     }
 
     /**
@@ -388,7 +467,7 @@ class Search extends Component
         $result->suggestions = $this->getSuggestions()->forQuery(
             $query->getParsedQuery(),
             $index,
-            $query->siteId,
+            $query->getSiteScope($index->siteId),
             $settings->suggestionLimit,
         );
     }
@@ -416,15 +495,20 @@ class Search extends Component
      */
     private function normalizeHitSites(SearchResult $result, SearchQuery $query, SearchIndex $index): void
     {
+        $scope = $query->getSiteScope($index->siteId);
+
         foreach ($result->hits as $hit) {
-            $hit->siteId ??= $query->siteId ?? $index->siteId;
+            // Only a search of one site can say which site a provider that did not answer meant.
+            $hit->siteId ??= $scope !== null && count($scope) === 1 ? $scope[0] : null;
 
             if ($hit->siteId === null) {
                 throw new ProviderException("A search of “{$index->handle}” returned a result without a site.");
             }
 
             // A provider may only answer within the scope it was given; it can never widen it.
-            $outOfScope = $query->siteId !== null ? $hit->siteId !== $query->siteId : !$index->coversSite($hit->siteId);
+            $outOfScope = $scope !== null
+                ? !in_array($hit->siteId, $scope, true)
+                : !$index->coversSite($hit->siteId);
 
             if ($outOfScope) {
                 throw new ProviderException("A search of “{$index->handle}” returned a result from outside its site scope.");
@@ -452,7 +536,7 @@ class Search extends Component
             }
         }
 
-        $this->dropHitsWithoutElements($result);
+        $this->dropHitsWithoutElements($result, $query);
     }
 
     /**
@@ -489,8 +573,18 @@ class Search extends Component
      * A hit whose element cannot be loaded in the searched site and status is not a result anyone
      * may see, so it is dropped rather than returned as an identifier with nothing behind it.
      */
-    private function dropHitsWithoutElements(SearchResult $result): void
+    private function dropHitsWithoutElements(SearchResult $result, SearchQuery $query): void
     {
+        $debug = $query->getDebug();
+
+        if ($debug !== null) {
+            foreach ($result->hits as $hit) {
+                if ($hit->element === null) {
+                    $debug->recordDropped($hit);
+                }
+            }
+        }
+
         $this->keepHits($result, array_values(array_filter(
             $result->hits,
             static fn(SearchHit $hit) => $hit->element !== null,
@@ -646,23 +740,23 @@ class Search extends Component
      */
     private function assertQuerySiteIsUsable(SearchQuery $query, SearchIndex $index): void
     {
-        if ($query->siteId === null) {
-            return;
-        }
+        $requested = $query->getSiteIds() ?? array_filter([$query->siteId]);
 
-        // Disabled sites still count: Craft can search them, so SearchKit does not add a stricter rule.
-        if (Craft::$app->getSites()->getSiteById($query->siteId, true) === null) {
-            throw new InvalidQueryException(
-                'The requested site does not exist.',
-                ['siteId' => ["No site exists with the ID {$query->siteId}."]],
-            );
-        }
+        foreach ($requested as $siteId) {
+            // Disabled sites still count: Craft can search them, so SearchKit does not add a stricter rule.
+            if (Craft::$app->getSites()->getSiteById($siteId, true) === null) {
+                throw new InvalidQueryException(
+                    'The requested site does not exist.',
+                    ['siteId' => ["No site exists with the ID {$siteId}."]],
+                );
+            }
 
-        if (!$index->coversSite($query->siteId)) {
-            throw new InvalidQueryException(
-                "The “{$index->name}” search index does not cover the requested site.",
-                ['siteId' => ["Site {$query->siteId} is outside this index's scope."]],
-            );
+            if (!$index->coversSite($siteId)) {
+                throw new InvalidQueryException(
+                    "The “{$index->name}” search index does not cover the requested site.",
+                    ['siteId' => ["Site {$siteId} is outside this index's scope."]],
+                );
+            }
         }
     }
 
@@ -686,6 +780,10 @@ class Search extends Component
         if ($query->hasCustomSort() && !$provider->supports(ProviderCapability::Sorting)) {
             throw UnsupportedCapabilityException::for($name, ProviderCapability::Sorting);
         }
+
+        if ($query->hasFacets() && !$provider->supports(ProviderCapability::Faceting)) {
+            throw UnsupportedCapabilityException::for($name, ProviderCapability::Faceting);
+        }
     }
 
     public function setIndexes(Indexes $indexes): void
@@ -695,7 +793,7 @@ class Search extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= $this->plugin()->getIndexes();
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 
     public function setSearchableFields(SearchableFields $searchableFields): void
@@ -705,7 +803,7 @@ class Search extends Component
 
     public function getSearchableFields(): SearchableFields
     {
-        return $this->_searchableFields ??= $this->plugin()->getSearchableFields();
+        return $this->_searchableFields ??= SearchKit::instance()->getSearchableFields();
     }
 
     public function setHighlighting(Highlighting $highlighting): void
@@ -715,7 +813,7 @@ class Search extends Component
 
     public function getHighlighting(): Highlighting
     {
-        return $this->_highlighting ??= $this->plugin()->getHighlighting();
+        return $this->_highlighting ??= SearchKit::instance()->getHighlighting();
     }
 
     public function setQueryPipeline(QueryPipeline $queryPipeline): void
@@ -725,7 +823,7 @@ class Search extends Component
 
     public function getQueryPipeline(): QueryPipeline
     {
-        return $this->_queryPipeline ??= $this->plugin()->getQueryPipeline();
+        return $this->_queryPipeline ??= SearchKit::instance()->getQueryPipeline();
     }
 
     public function setSuggestions(Suggestions $suggestions): void
@@ -735,7 +833,7 @@ class Search extends Component
 
     public function getSuggestions(): Suggestions
     {
-        return $this->_suggestions ??= $this->plugin()->getSuggestions();
+        return $this->_suggestions ??= SearchKit::instance()->getSuggestions();
     }
 
     public function setRuleEngine(RuleEngine $ruleEngine): void
@@ -745,7 +843,7 @@ class Search extends Component
 
     public function getRuleEngine(): RuleEngine
     {
-        return $this->_ruleEngine ??= $this->plugin()->getRuleEngine();
+        return $this->_ruleEngine ??= SearchKit::instance()->getRuleEngine();
     }
 
     public function setProviders(Providers $providers): void
@@ -755,17 +853,6 @@ class Search extends Component
 
     public function getProviders(): Providers
     {
-        return $this->_providers ??= $this->plugin()->getProviders();
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new InvalidConfigException('SearchKit is not installed or is disabled.');
-        }
-
-        return $plugin;
+        return $this->_providers ??= SearchKit::instance()->getProviders();
     }
 }

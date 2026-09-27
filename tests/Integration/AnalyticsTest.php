@@ -39,7 +39,44 @@ class AnalyticsTest extends SearchContentTestCase
         self::assertSame('zebracrossing', $event['normalizedQuery']);
         self::assertSame($result->total, (int)$event['resultCount']);
         self::assertGreaterThan(0, (float)$event['executionTime']);
-        self::assertNotSame('', (string)$event['language']);
+    }
+
+    public function testASearchOfOneSiteIsRecordedInThatSitesLanguage(): void
+    {
+        $siteId = $this->fieldSectionSiteId();
+        $index = $this->persistIndexWithFields([Entry::class => self::FIELD], null, $siteId);
+        $this->createPage('SearchKit analytics language', [self::FIELD => 'zebralingua']);
+
+        $result = $this->searchIndex($index->handle, 'zebralingua');
+        $event = $this->event((string)$result->trackingToken);
+
+        self::assertSame($siteId, (int)$event['siteId']);
+        self::assertSame(Craft::$app->getSites()->getSiteById($siteId)?->language, $event['language']);
+    }
+
+    public function testASearchAcrossSitesWritingDifferentLanguagesClaimsNoLanguage(): void
+    {
+        $languages = [];
+
+        foreach ($this->fieldSectionSiteIds() as $siteId) {
+            $languages[] = Craft::$app->getSites()->getSiteById($siteId)?->language;
+        }
+
+        $index = $this->persistIndexWithFields([Entry::class => self::FIELD]);
+        $this->createPage('SearchKit analytics scope', [self::FIELD => 'zebrascope']);
+
+        $result = $this->searchIndex($index->handle, 'zebrascope');
+        $event = $this->event((string)$result->trackingToken);
+
+        // No site is named for a search covering several, and no language is claimed for one
+        // covering sites that are written in more than one.
+        self::assertNull($event['siteId']);
+
+        if (count(array_unique($languages)) > 1) {
+            self::assertNull($event['language'], 'A mixed-language search must not claim one language.');
+        } else {
+            self::assertSame($languages[0], $event['language']);
+        }
     }
 
     public function testARecordedSearchNamesNobody(): void
@@ -307,7 +344,7 @@ class AnalyticsTest extends SearchContentTestCase
         self::assertSame(1, $this->insights()->getSummary($this->criteria($index))->totalSearches);
     }
 
-    public function testContentGapsNameQueriesNothingCameOf(): void
+    public function testUnopenedQueriesNameQueriesNothingCameOf(): void
     {
         $index = $this->measuredIndex();
         $entry = $this->createPage('SearchKit analytics subject', [self::FIELD => 'zebracrossing']);
@@ -324,7 +361,7 @@ class AnalyticsTest extends SearchContentTestCase
         // Searched for once, which is a one-off rather than a gap.
         $this->searchIndex($index->handle, 'perambulatrix');
 
-        $gaps = $this->insights()->getContentGaps($this->criteria($index));
+        $gaps = $this->insights()->getUnopenedQueries($this->criteria($index));
 
         self::assertSame(['quixotibulator'], array_map(static fn($gap) => $gap->query, $gaps));
         self::assertSame(2, $gaps[0]->searches);
@@ -482,6 +519,9 @@ class AnalyticsTest extends SearchContentTestCase
      */
     private function measuredIndex(?AnalyticsSettings $settings = null): SearchIndex
     {
+        // Skips rather than fails where the project carries no such field, as every other content test does.
+        $this->fieldEntryType();
+
         $index = $this->persistIndexWithFields([Entry::class => self::FIELD]);
 
         if ($settings !== null) {

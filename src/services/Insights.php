@@ -42,7 +42,7 @@ class Insights extends Component
                 'clicks' => 'COALESCE(SUM([[clickCount]]), 0)',
                 'clickedSearches' => $this->countWhere('[[clickCount]] > 0'),
                 'averageResponseTime' => 'AVG([[executionTime]])',
-                'slowSearches' => $this->countWhere('[[executionTime]] >= ' . (int)$criteria->slowThreshold),
+                'slowSearches' => $this->countWhere('[[executionTime]] >= ' . $this->slowThresholdOf($criteria)),
             ])
             ->one() ?: []);
 
@@ -83,9 +83,9 @@ class Insights extends Component
      *
      * @return QueryInsight[]
      */
-    public function getContentGaps(InsightsCriteria $criteria): array
+    public function getUnopenedQueries(InsightsCriteria $criteria): array
     {
-        return $this->queries($criteria, 'gaps', null, static function(Query $query) use ($criteria) {
+        return $this->queries($criteria, 'unopened', null, static function(Query $query) use ($criteria) {
             $query->having(['and',
                 ['>=', 'COUNT(*)', max(1, $criteria->minSearches)],
                 ['=', 'COALESCE(SUM([[clickCount]]), 0)', 0],
@@ -101,8 +101,12 @@ class Insights extends Component
     public function getSlowQueries(InsightsCriteria $criteria): array
     {
         return $this->queries($criteria, 'slow', null, function(Query $query) use ($criteria) {
+            // A query can span indexes that disagree about slow, so it has to clear the highest bar
+            // among them. With one threshold in play that is the threshold, unchanged.
             $query
-                ->having(['>=', 'AVG([[executionTime]])', $criteria->slowThreshold])
+                ->having(new Expression(
+                    'AVG([[executionTime]]) >= MAX(' . $this->slowThresholdOf($criteria) . ')',
+                ))
                 ->orderBy([new Expression('AVG([[executionTime]]) DESC')]);
         });
     }
@@ -209,13 +213,7 @@ class Insights extends Component
             ->limit($criteria->limit)
             ->all());
 
-        $results = array_map(static fn(array $row) => new ClickedResult([
-            'elementId' => (int)$row['elementId'],
-            'elementType' => (string)$row['elementType'],
-            'siteId' => (int)$row['clickSiteId'],
-            'clicks' => (int)$row['clicks'],
-            'averagePosition' => round((float)$row['averagePosition'], 2),
-        ]), $rows);
+        $results = array_map(static fn(array $row) => ClickedResult::fromRow($row), $rows);
 
         $this->nameResults($results);
 
@@ -229,7 +227,7 @@ class Insights extends Component
      *
      * @param ClickedResult[] $results
      */
-    private function nameResults(array $results): void
+    public function nameResults(array $results): void
     {
         $wanted = [];
 
@@ -283,7 +281,7 @@ class Insights extends Component
             'query' => (string)$row['query'],
             'normalizedQuery' => (string)$row['normalizedQuery'],
             'correctedQuery' => $row['correctedQuery'] !== null ? (string)$row['correctedQuery'] : null,
-            'language' => (string)$row['language'],
+            'language' => $row['language'] !== null ? (string)$row['language'] : null,
             'resultCount' => (int)$row['resultCount'],
             'executionTime' => (float)$row['executionTime'],
             'clickCount' => (int)$row['clickCount'],
@@ -346,8 +344,11 @@ class Insights extends Component
     /**
      * The searches a reading covers. A site filter means searches of that site alone: one covering
      * every site was not a search of any one of them.
+     *
+     * Public so that anything else reading recorded activity reads exactly the same searches,
+     * rather than writing a second definition of what a period covers.
      */
-    private function events(InsightsCriteria $criteria, string $alias = ''): Query
+    public function events(InsightsCriteria $criteria, string $alias = ''): Query
     {
         // Named only when something is joined to it, so every other reading keeps its plain columns.
         $column = $alias !== '' ? $alias . '.' : '';
@@ -355,6 +356,11 @@ class Insights extends Component
 
         if ($criteria->indexId !== null) {
             $query->andWhere([$column . 'indexId' => $criteria->indexId]);
+        }
+
+        // Narrows further, never widens: a reading of several indexes still honours a single one.
+        if ($criteria->indexIds !== null) {
+            $query->andWhere([$column . 'indexId' => array_map('intval', $criteria->indexIds)]);
         }
 
         if ($criteria->siteId !== null) {
@@ -374,6 +380,32 @@ class Insights extends Component
     }
 
     /**
+     * What counts as slow for the search a row describes, as SQL. One threshold is that number;
+     * several indexes that disagree become a CASE over the index each search belongs to, so a
+     * reading covering all of them judges every search by its own index rather than by one
+     * index's idea of slow.
+     *
+     * Built from integers only — index IDs come from the database and thresholds are validated —
+     * so nothing here can carry anything but a number into SQL.
+     */
+    private function slowThresholdOf(InsightsCriteria $criteria): string
+    {
+        $default = (int)$criteria->slowThreshold;
+
+        if ($criteria->slowThresholds === []) {
+            return (string)$default;
+        }
+
+        $cases = '';
+
+        foreach ($criteria->slowThresholds as $indexId => $threshold) {
+            $cases .= ' WHEN [[indexId]] = ' . (int)$indexId . ' THEN ' . (int)$threshold;
+        }
+
+        return '(CASE' . $cases . ' ELSE ' . $default . ' END)';
+    }
+
+    /**
      * A conditional count both databases read the same way.
      */
     private function countWhere(string $condition): Expression
@@ -382,11 +414,14 @@ class Insights extends Component
     }
 
     /**
+     * Reuses a reading until something new has been recorded. Public for the same reason as
+     * `events()`: a second reading of this table must not cache on weaker terms than this one.
+     *
      * @template T
      * @param callable():T $read
      * @return T
      */
-    private function cached(string $key, callable $read): mixed
+    public function cached(string $key, callable $read): mixed
     {
         $cache = Craft::$app->getCache();
         // Kept against what had been recorded, so a reading can be reused but never be behind.

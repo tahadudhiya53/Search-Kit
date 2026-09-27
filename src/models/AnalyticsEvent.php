@@ -26,8 +26,11 @@ class AnalyticsEvent extends Model
     /** @var string|null What was searched for instead, when the query was corrected before running. */
     public ?string $correctedQuery = null;
 
-    /** @var string The language the text was read in, which decides how it was reduced. */
-    public string $language = '';
+    /**
+     * @var string|null The language the text was read in, or null when the search covered sites
+     * written in more than one and no single language is true of it.
+     */
+    public ?string $language = null;
 
     public int $resultCount = 0;
 

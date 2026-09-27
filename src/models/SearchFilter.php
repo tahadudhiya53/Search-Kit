@@ -34,6 +34,38 @@ class SearchFilter extends Model
         ];
     }
 
+    /**
+     * Whether a range runs backwards. Only values with an order that every provider reads the same
+     * way are judged: two numbers, two dates, or two dates written out, where text sorts by date.
+     * Anything else is left to the provider, which is what keeps this from inventing an ordering.
+     */
+    private function isInverted(): bool
+    {
+        [$from, $to] = array_values((array)$this->value) + [null, null];
+
+        if ($from instanceof DateTimeInterface && $to instanceof DateTimeInterface) {
+            return $from > $to;
+        }
+
+        if (is_numeric($from) && is_numeric($to)) {
+            return (float)$from > (float)$to;
+        }
+
+        if (is_string($from) && is_string($to) && self::isDateText($from) && self::isDateText($to)) {
+            return strcmp($from, $to) > 0;
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether text is an ISO-8601 date, which sorts chronologically as it stands.
+     */
+    private static function isDateText(string $value): bool
+    {
+        return (bool)preg_match('/^\d{4}-\d{2}-\d{2}([T ]|$)/', $value);
+    }
+
     public function validateValue(string $attribute): void
     {
         if ($this->operator->expectsArray() && !is_array($this->value)) {
@@ -48,6 +80,19 @@ class SearchFilter extends Model
 
         if ($this->operator->expectsArray() && $this->value === []) {
             $this->addError($attribute, "The {$this->operator->value} operator expects at least one value.");
+            return;
+        }
+
+        // A range has a bottom and a top. Anything else is a mistake rather than a bound to guess at.
+        if ($this->operator->expectsRange() && count((array)$this->value) !== 2) {
+            $this->addError($attribute, "The {$this->operator->value} operator expects a lowest and a highest value.");
+            return;
+        }
+
+        // A range whose bottom is above its top matches nothing at all, which no provider would
+        // report as a mistake — so it is one here, before anything runs.
+        if ($this->operator->expectsRange() && $this->isInverted()) {
+            $this->addError($attribute, "The {$this->operator->value} operator expects its lowest value first.");
             return;
         }
 

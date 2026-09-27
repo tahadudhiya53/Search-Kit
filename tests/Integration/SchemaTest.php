@@ -22,6 +22,31 @@ class SchemaTest extends IntegrationTestCase
         self::assertNotEmpty($this->tableSchema(Table::SEARCHEVENTS)->columns);
         self::assertNotEmpty($this->tableSchema(Table::SEARCHCLICKS)->columns);
         self::assertNotEmpty($this->tableSchema(Table::DASHBOARDLAYOUTS)->columns);
+        self::assertNotEmpty($this->tableSchema(Table::APIKEYS)->columns);
+    }
+
+    public function testApiKeysTableHasTheExpectedColumns(): void
+    {
+        $schema = $this->tableSchema(Table::APIKEYS);
+
+        self::assertSame(['id'], $schema->primaryKey);
+        self::assertEqualsCanonicalizing(
+            [
+                'id', 'name', 'hash', 'prefix', 'enabled', 'indexIds', 'rateLimit', 'dateLastUsed',
+                'dateCreated', 'dateUpdated', 'uid',
+            ],
+            array_keys($schema->columns),
+        );
+
+        // The key exists only as a digest, and that digest is what a request is matched against.
+        self::assertFalse($schema->columns['hash']->allowNull);
+        self::assertFalse($schema->columns['prefix']->allowNull);
+        self::assertContains(['hash'], $this->uniqueIndexes(Table::APIKEYS));
+
+        // No scope means every index; no rate limit means none of its own.
+        self::assertTrue($schema->columns['indexIds']->allowNull);
+        self::assertTrue($schema->columns['rateLimit']->allowNull);
+        self::assertTrue($schema->columns['dateLastUsed']->allowNull);
     }
 
     public function testRuleTablesHaveTheExpectedColumns(): void

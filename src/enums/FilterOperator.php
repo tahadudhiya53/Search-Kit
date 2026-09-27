@@ -15,6 +15,7 @@ enum FilterOperator: string
     case GreaterThanOrEquals = 'gte';
     case LessThan = 'lt';
     case LessThanOrEquals = 'lte';
+    case Between = 'between';
 
     /**
      * Whether the operator orders two values rather than matching them.
@@ -26,6 +27,7 @@ enum FilterOperator: string
             self::GreaterThanOrEquals,
             self::LessThan,
             self::LessThanOrEquals,
+            self::Between,
         ], true);
     }
 
@@ -34,6 +36,14 @@ enum FilterOperator: string
      */
     public function expectsArray(): bool
     {
-        return $this === self::In || $this === self::NotIn;
+        return in_array($this, [self::In, self::NotIn, self::Between], true);
+    }
+
+    /**
+     * Whether the operator takes a lower and an upper bound rather than a list of any length.
+     */
+    public function expectsRange(): bool
+    {
+        return $this === self::Between;
     }
 }

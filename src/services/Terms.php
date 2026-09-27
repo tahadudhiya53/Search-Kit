@@ -141,7 +141,7 @@ class Terms extends Component
      *
      * @return string[]
      */
-    public function startingWith(int $indexId, ?int $siteId, string $prefix, int $limit, int $offset = 0): array
+    public function startingWith(int $indexId, int|array|null $siteId, string $prefix, int $limit, int $offset = 0): array
     {
         if ($prefix === '' || $limit < 1) {
             return [];
@@ -164,7 +164,7 @@ class Terms extends Component
      *
      * @return string[] Shortest first, then alphabetical, so the same word always corrects the same way.
      */
-    public function withinLengthOf(int $indexId, ?int $siteId, string $term, int $maxDistance): array
+    public function withinLengthOf(int $indexId, int|array|null $siteId, string $term, int $maxDistance): array
     {
         if ($term === '' || $maxDistance < 1) {
             return [];
@@ -187,7 +187,7 @@ class Terms extends Component
      * Whether this word can be found by someone searching publicly, which is what decides whether
      * it needs correcting at all.
      */
-    public function isSearchable(int $indexId, ?int $siteId, string $term): bool
+    public function isSearchable(int $indexId, int|array|null $siteId, string $term): bool
     {
         return $this->visible($indexId, $siteId, [$term]) !== [];
     }
@@ -207,7 +207,7 @@ class Terms extends Component
      * @param string[] $terms
      * @return string[]
      */
-    public function visible(int $indexId, ?int $siteId, array $terms): array
+    public function visible(int $indexId, int|array|null $siteId, array $terms): array
     {
         $terms = array_values(array_unique(array_filter($terms, static fn(string $term) => $term !== '')));
 
@@ -255,20 +255,20 @@ class Terms extends Component
      * @param string[] $terms
      * @return array<array<string,mixed>>
      */
-    private function ownerRows(int $indexId, ?int $siteId, array $terms, int $afterId): array
+    private function ownerRows(int $indexId, int|array|null $siteId, array $terms, int $afterId): array
     {
         return (new Query())
             ->select(['id', 'term', 'elementType', 'elementId', 'siteId'])
             ->from([Table::TERMS])
             ->where(['indexId' => $indexId, 'term' => $terms])
             ->andWhere(['>', 'id', $afterId])
-            ->andFilterWhere(['siteId' => $siteId])
+            ->andFilterWhere(['siteId' => $this->siteCondition($siteId)])
             ->orderBy(['id' => SORT_ASC])
             ->limit(self::OWNER_BATCH)
             ->all();
     }
 
-    public function countForIndex(int $indexId, ?int $siteId = null): int
+    public function countForIndex(int $indexId, int|array|null $siteId = null): int
     {
         return (int)$this->scoped($indexId, $siteId)->count();
     }
@@ -329,16 +329,32 @@ class Terms extends Component
     }
 
     /**
-     * A null site means every site the index covers, since an index may cover more than one.
+     * A null site means every site the index covers, since an index may cover more than one; a list
+     * means those sites alone, so a word only another site holds is never offered.
      */
-    private function scoped(int $indexId, ?int $siteId): Query
+    private function scoped(int $indexId, int|array|null $siteId): Query
     {
         return (new Query())
             ->select(['term'])
             ->distinct()
             ->from([Table::TERMS])
             ->where(['indexId' => $indexId])
-            ->andFilterWhere(['siteId' => $siteId]);
+            ->andFilterWhere(['siteId' => $this->siteCondition($siteId)]);
+    }
+
+    /**
+     * The sites a read is confined to. An empty list would otherwise be filtered away and quietly
+     * read every site, so it is refused as the empty scope it is.
+     *
+     * @return int|int[]|null
+     */
+    private function siteCondition(int|array|null $siteId): int|array|null
+    {
+        if (!is_array($siteId)) {
+            return $siteId;
+        }
+
+        return $siteId !== [] ? array_values(array_unique(array_map('intval', $siteId))) : [0];
     }
 
     /**

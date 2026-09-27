@@ -34,7 +34,7 @@ class IndexController extends Controller
      */
     public function actionStatus(): int
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
 
         foreach ($plugin->getIndexes()->getAllIndexes() as $index) {
             $status = $plugin->getIndexing()->getStatus($index);
@@ -59,7 +59,7 @@ class IndexController extends Controller
     public function actionProcess(string $handle): int
     {
         $index = $this->requireIndex($handle);
-        $result = $this->plugin()->getIndexing()->processPending($index);
+        $result = SearchKit::instance()->getIndexing()->processPending($index);
 
         return $this->report($result, 'Processed');
     }
@@ -69,7 +69,7 @@ class IndexController extends Controller
      */
     public function actionRebuild(string $handle): int
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $index = $this->requireIndex($handle);
 
         if (!$this->now) {
@@ -93,7 +93,7 @@ class IndexController extends Controller
      */
     public function actionRetry(string $handle): int
     {
-        $plugin = $this->plugin();
+        $plugin = SearchKit::instance();
         $index = $this->requireIndex($handle);
         $reset = $plugin->getIndexing()->retryFailed($index);
 
@@ -142,23 +142,12 @@ class IndexController extends Controller
 
     private function requireIndex(string $handle): SearchIndex
     {
-        $index = $this->plugin()->getIndexes()->getIndexByHandle($handle);
+        $index = SearchKit::instance()->getIndexes()->getIndexByHandle($handle);
 
         if ($index === null) {
             throw new Exception("No search index exists with the handle “{$handle}”.");
         }
 
         return $index;
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new Exception('SearchKit is not installed or is disabled.');
-        }
-
-        return $plugin;
     }
 }

@@ -14,7 +14,6 @@ use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\models\SearchSettings;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Turns what a user typed into terms a provider can run: operators, normalization, tokenization,
@@ -45,20 +44,26 @@ class QueryPipeline extends Component
     public function parse(SearchQuery $query, SearchIndex $index, ?SearchProviderInterface $provider = null): ParsedQuery
     {
         $settings = $index->getSearchSettings();
+        $scope = $query->getSiteScope($index->siteId);
+
+        // Craft reduces an element's keywords in its site's language, so a query is read in the
+        // language of every site it is searching — one of them, or each of several.
+        $languages = $this->getNormalization()->languagesFor($scope);
 
         $parsed = new ParsedQuery([
             'raw' => $query->text,
-            'normalized' => $this->getNormalization()->normalize($query->text),
+            'languages' => $languages,
+            'normalized' => $this->getNormalization()->normalize($query->text, $languages[0]),
         ]);
 
         $parsed->setTerms($settings->operators
-            ? $this->readSyntax($query->text)
-            : $this->readWords($parsed->normalized));
+            ? $this->readSyntax($query->text, $languages)
+            : $this->readWords($query->text, $languages));
 
         $this->assertProviderCanRun($parsed, $provider);
-        $this->dropStopWords($parsed, $settings);
+        $this->dropStopWords($parsed, $settings, $languages);
         $this->applyPartialMatching($parsed, $settings, $provider);
-        $this->applySynonyms($parsed, $index, $settings, $query->siteId, $provider);
+        $this->applySynonyms($parsed, $index, $settings, $scope, $provider);
 
         return $parsed;
     }
@@ -70,7 +75,7 @@ class QueryPipeline extends Component
      * @return QueryTerm[]
      * @throws InvalidQueryException if the operators say two things that cannot both be true.
      */
-    private function readSyntax(string $text): array
+    private function readSyntax(string $text, array $languages): array
     {
         preg_match_all(self::SYNTAX, $text, $matches, PREG_SET_ORDER);
 
@@ -87,7 +92,7 @@ class QueryPipeline extends Component
                 continue;
             }
 
-            $term = $this->createTerm($token, $quoted, $match[1] === '-');
+            $term = $this->createTerm($token, $quoted, $match[1] === '-', $languages);
 
             if ($term === null) {
                 continue;
@@ -106,15 +111,69 @@ class QueryPipeline extends Component
     }
 
     /**
-     * One plain term per word, for an index that does not read operators.
+     * One plain term per word, for an index that does not read operators. Each language reads the
+     * text for itself, and every reading has to make the same number of words of it — otherwise
+     * there is no term to pair up, and running one language's reading in place of another's would
+     * search a site for words nobody asked it for.
      *
+     * @param string[] $languages
      * @return QueryTerm[]
+     * @throws InvalidQueryException if the languages do not read the text as the same words.
      */
-    private function readWords(string $normalized): array
+    private function readWords(string $text, array $languages): array
     {
-        return array_map(
-            static fn(string $word) => QueryTerm::make($word),
-            $this->getNormalization()->tokenize($normalized),
+        $readings = [];
+
+        foreach ($languages as $language) {
+            $readings[$language] = $this->getNormalization()->terms($text, $language);
+        }
+
+        $primary = $readings[$languages[0]];
+
+        $disagreeing = array_keys(array_filter(
+            $readings,
+            static fn(array $reading) => count($reading) !== count($primary),
+        ));
+
+        if ($disagreeing !== []) {
+            throw $this->unreadable([$languages[0], ...$disagreeing]);
+        }
+
+        $terms = [];
+
+        foreach ($primary as $position => $word) {
+            $term = QueryTerm::make($word);
+
+            foreach ($languages as $language) {
+                $this->addLanguageVariant($term, $readings[$language][$position]);
+            }
+
+            $terms[] = $term;
+        }
+
+        return $terms;
+    }
+
+    /**
+     * A search whose languages disagree about what was even typed. Refused rather than answered:
+     * either reading searches one of the sites for something other than what was written, and which
+     * one is not something to decide on a site's behalf.
+     *
+     * @param string[] $languages
+     */
+    private function unreadable(array $languages): InvalidQueryException
+    {
+        $named = implode(' and ', array_map(
+            static fn(string $language) => "“{$language}”",
+            array_values(array_unique($languages)),
+        ));
+
+        return new InvalidQueryException(
+            'This search covers sites whose languages read the query differently.',
+            ['text' => [
+                "{$named} do not read this query as the same words, and neither may stand in for "
+                . 'the other. Search the sites of one language at a time.',
+            ]],
         );
     }
 
@@ -139,16 +198,31 @@ class QueryPipeline extends Component
 
     /**
      * @param bool $quoted Whether the term was written as a phrase.
+     * @param string[] $languages Every language the term is read in, the first one deciding its text.
      */
-    private function createTerm(string $token, bool $quoted, bool $excluded): ?QueryTerm
+    private function createTerm(string $token, bool $quoted, bool $excluded, array $languages): ?QueryTerm
     {
         $partial = $quoted ? PartialMatchMode::Off : $this->readWildcards($token);
-        $text = $this->getNormalization()->normalize($token);
+        $readings = [];
 
-        if ($text === '') {
+        foreach ($languages as $language) {
+            $readings[$language] = $this->getNormalization()->normalize($token, $language);
+        }
+
+        // Nothing in any of them: punctuation, which was never a term in the first place.
+        if (implode('', $readings) === '') {
             return null;
         }
 
+        // A word to one language and nothing at all to another is the same disagreement a differing
+        // number of words is, and it is refused the same way.
+        $silent = array_keys(array_filter($readings, static fn(string $reading) => $reading === ''));
+
+        if ($silent !== []) {
+            throw $this->unreadable([$languages[0], ...$silent]);
+        }
+
+        $text = $readings[$languages[0]];
         $term = QueryTerm::make($text, $token);
         $term->excluded = $excluded;
         $term->partial = $partial;
@@ -161,7 +235,33 @@ class QueryPipeline extends Component
         // Quoting a single word is how you ask for that word and nothing longer.
         $term->exact = $quoted && !$term->phrase;
 
+        // A word folds differently from one language to the next, and each site's content was
+        // indexed in its own. Every reading is accepted, so neither site is searched for the other's
+        // spelling of the word — and a term the languages agree on stays one term.
+        foreach ($readings as $reading) {
+            $this->addLanguageVariant($term, $reading);
+        }
+
         return $term;
+    }
+
+    /**
+     * Another language's reading of the same word, accepted alongside it. A reading the term
+     * already has adds nothing, which is what keeps a single-language search to one term.
+     */
+    private function addLanguageVariant(QueryTerm $term, string $text): void
+    {
+        if ($text === '' || in_array($text, $term->getTexts(), true)) {
+            return;
+        }
+
+        $variant = QueryTerm::make($text);
+        $variant->partial = $term->partial;
+        $variant->wildcard = $term->wildcard;
+        $variant->exact = $term->exact;
+        $variant->phrase = str_contains($text, ' ');
+
+        $term->addAlternative($variant);
     }
 
     /**
@@ -183,7 +283,10 @@ class QueryPipeline extends Component
         return $left ? PartialMatchMode::Substring : PartialMatchMode::Prefix;
     }
 
-    private function dropStopWords(ParsedQuery $parsed, SearchSettings $settings): void
+    /**
+     * @param string[] $languages
+     */
+    private function dropStopWords(ParsedQuery $parsed, SearchSettings $settings, array $languages): void
     {
         $candidates = [];
 
@@ -198,7 +301,7 @@ class QueryPipeline extends Component
         }
 
         $removed = [];
-        $this->getStopWords()->filter($candidates, $settings, $removed);
+        $this->getStopWords()->filter($candidates, $settings, $removed, $languages);
 
         if ($removed === []) {
             return;
@@ -241,18 +344,27 @@ class QueryPipeline extends Component
         ParsedQuery $parsed,
         SearchIndex $index,
         SearchSettings $settings,
-        ?int $siteId,
+        ?array $scope,
         ?SearchProviderInterface $provider,
     ): void {
         if (!$settings->synonyms || !$this->supports($provider, ProviderCapability::TermAlternation)) {
             return;
         }
 
+        $withheld = [];
+
         foreach ($parsed->getRequiredTerms() as $term) {
-            $expansions = $this->getSynonyms()->expand($term->text, $index, $siteId);
+            $dropped = [];
+
+            // Only what holds in every site being searched: a group written for one site would
+            // otherwise return results there that a search of the others never had.
+            $expansions = $this->getSynonyms()->expandAcross($term->getTexts(), $index, $scope, $dropped);
 
             $term->addSynonyms(...array_slice($expansions, 0, self::MAX_SYNONYMS));
+            $withheld = [...$withheld, ...$dropped];
         }
+
+        $parsed->withheldSynonyms = array_values(array_unique($withheld));
     }
 
     /**
@@ -293,7 +405,7 @@ class QueryPipeline extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 
     public function setStopWords(StopWords $stopWords): void
@@ -303,7 +415,7 @@ class QueryPipeline extends Component
 
     public function getStopWords(): StopWords
     {
-        return $this->_stopWords ??= $this->plugin()->getStopWords();
+        return $this->_stopWords ??= SearchKit::instance()->getStopWords();
     }
 
     public function setSynonyms(Synonyms $synonyms): void
@@ -313,12 +425,6 @@ class QueryPipeline extends Component
 
     public function getSynonyms(): Synonyms
     {
-        return $this->_synonyms ??= $this->plugin()->getSynonyms();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+        return $this->_synonyms ??= SearchKit::instance()->getSynonyms();
     }
 }

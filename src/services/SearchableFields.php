@@ -18,7 +18,6 @@ use Tahadudhiya\SearchKit\records\SearchableFieldRecord;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Reads and writes which fields an index searches, and how heavily each one counts. It is also the
@@ -265,19 +264,7 @@ class SearchableFields extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= SearchKit::getInstance()?->getIndexes()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
-    }
-
-    public function deleteField(SearchableField $field): bool
-    {
-        if ($field->id === null) {
-            return false;
-        }
-
-        $record = SearchableFieldRecord::findOne($field->id);
-
-        return $record !== null && (bool)$record->delete();
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 
     private function indexExists(?int $indexId): bool

@@ -13,7 +13,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\models\SearchRule;
 use Tahadudhiya\SearchKit\SearchKit;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Turns the rules governing a query into changes to its results. Nothing here knows what served the
@@ -50,8 +49,8 @@ class RuleEngine extends Component
 
         $normalized = $this->getNormalization()->normalize($text ?? $query->text);
 
-        // The sites this search covers: one of them, or every site the index does.
-        $scopeSiteId = $query->siteId ?? $index->siteId;
+        // The sites this search covers, or null for every site there is.
+        $scope = $query->getSiteScope($index->siteId);
         $matched = [];
 
         foreach ($this->getRules()->getRulesForIndex((int)$index->id, $query->siteId) as $rule) {
@@ -67,11 +66,11 @@ class RuleEngine extends Component
         // arrive highest priority first, so the first claim on a result is the one that stands, and
         // an adjustment then applies only to a result no rule claimed.
         foreach ($matched as [$rule, $evaluation]) {
-            $this->resolveExclusive($rule, $evaluation, $plan, $index, $scopeSiteId);
+            $this->resolveExclusive($rule, $evaluation, $plan, $index, $scope);
         }
 
         foreach ($matched as [$rule, $evaluation]) {
-            $this->resolveAdjustments($rule, $evaluation, $plan, $index, $scopeSiteId);
+            $this->resolveAdjustments($rule, $evaluation, $plan, $index, $scope);
         }
 
         $this->decideWindow($plan, $query);
@@ -137,8 +136,7 @@ class RuleEngine extends Component
     /**
      * Applies the plan to what the provider returned, and cuts it back to the page that was asked
      * for. Hits carry only identifiers here, so nothing in this class loads an element.
-     */
-    /**
+     *
      * @param SearchHit[] $adjusted The results a boost or a bury moves, fetched in their own right.
      */
     public function apply(
@@ -268,13 +266,13 @@ class RuleEngine extends Component
         RuleEvaluation $evaluation,
         RulePlan $plan,
         SearchIndex $index,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): void {
         $ruleId = (int)$rule->id;
 
         foreach ($rule->getActions() as $action) {
             if ($action->type === RuleActionType::Redirect) {
-                $this->claimRedirect($action, $rule, $evaluation, $plan, $scopeSiteId);
+                $this->claimRedirect($action, $rule, $evaluation, $plan, $scope);
                 continue;
             }
 
@@ -282,16 +280,9 @@ class RuleEngine extends Component
                 continue;
             }
 
-            $target = $this->target($action, $rule, $index, $evaluation, $scopeSiteId);
+            $target = $this->unclaimedTarget($action, $rule, $index, $evaluation, $plan, $scope);
 
             if ($target === null) {
-                continue;
-            }
-
-            $claim = $plan->claimedBy($target['elementId'], $target['siteId']);
-
-            if ($claim !== null) {
-                $this->record($evaluation, $action, false, "claimedBy:{$claim['action']}:{$claim['ruleId']}");
                 continue;
             }
 
@@ -312,24 +303,16 @@ class RuleEngine extends Component
         RuleEvaluation $evaluation,
         RulePlan $plan,
         SearchIndex $index,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): void {
         foreach ($rule->getActions() as $action) {
             if (!$action->type->adjustsScore()) {
                 continue;
             }
 
-            $target = $this->target($action, $rule, $index, $evaluation, $scopeSiteId);
+            $target = $this->unclaimedTarget($action, $rule, $index, $evaluation, $plan, $scope);
 
             if ($target === null) {
-                continue;
-            }
-
-            $claim = $plan->claimedBy($target['elementId'], $target['siteId']);
-
-            // A result that was removed or placed is not ranked by its score any more.
-            if ($claim !== null) {
-                $this->record($evaluation, $action, false, "claimedBy:{$claim['action']}:{$claim['ruleId']}");
                 continue;
             }
 
@@ -350,9 +333,43 @@ class RuleEngine extends Component
     }
 
     /**
+     * The result an action acts on, or null when it names none in scope or an earlier rule already
+     * claimed it. The first claim on a result stands — a hidden, pinned or promoted result is no
+     * longer ranked by its score, so nothing later may move it either.
+     *
+     * @param int[]|null $scope The sites this search covers, or null for every site there is.
+     * @return array{elementId:int,elementType:string,siteId:int|null}|null
+     */
+    private function unclaimedTarget(
+        RuleAction $action,
+        SearchRule $rule,
+        SearchIndex $index,
+        RuleEvaluation $evaluation,
+        RulePlan $plan,
+        ?array $scope,
+    ): ?array {
+        $target = $this->target($action, $rule, $index, $evaluation, $scope);
+
+        if ($target === null) {
+            return null;
+        }
+
+        $claim = $plan->claimedBy($target['elementId'], $target['siteId']);
+
+        if ($claim !== null) {
+            $this->record($evaluation, $action, false, "claimedBy:{$claim['action']}:{$claim['ruleId']}");
+
+            return null;
+        }
+
+        return $target;
+    }
+
+    /**
      * The result an action acts on, with the site it acts in settled. An action outside the site
      * scope the rule was read for is refused rather than quietly reaching another site.
      *
+     * @param int[]|null $scope The sites this search covers, or null for every site there is.
      * @return array{elementId:int,elementType:string,siteId:int|null}|null
      */
     private function target(
@@ -360,7 +377,7 @@ class RuleEngine extends Component
         SearchRule $rule,
         SearchIndex $index,
         RuleEvaluation $evaluation,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): ?array {
         if ($action->elementId === null || $action->elementType === null) {
             $this->record($evaluation, $action, false, 'noTarget');
@@ -391,7 +408,7 @@ class RuleEngine extends Component
         }
 
         // Nothing may act outside the sites this search covers, whatever the rule asked for.
-        if ($siteId !== null && $scopeSiteId !== null && $siteId !== $scopeSiteId) {
+        if ($siteId !== null && $scope !== null && !in_array($siteId, $scope, true)) {
             $this->record($evaluation, $action, false, 'siteOutsideSearchScope');
 
             return null;
@@ -414,9 +431,10 @@ class RuleEngine extends Component
         SearchRule $rule,
         RuleEvaluation $evaluation,
         RulePlan $plan,
-        ?int $scopeSiteId,
+        ?array $scope,
     ): void {
-        if ($rule->siteId !== null && $rule->siteId !== $scopeSiteId) {
+        // A rule written for one site only redirects a search of that site and nothing else.
+        if ($rule->siteId !== null && $scope !== [$rule->siteId]) {
             $this->record($evaluation, $action, false, 'redirectNarrowerThanSearch');
 
             return;
@@ -447,6 +465,7 @@ class RuleEngine extends Component
 
         $plan->hidden[$key] = [
             'elementId' => $target['elementId'],
+            'elementType' => $target['elementType'],
             'siteId' => $target['siteId'],
             'ruleId' => $ruleId,
         ];
@@ -531,10 +550,16 @@ class RuleEngine extends Component
         $reach = $query->offset + $query->limit;
         $wantsReordering = $plan->adjustments !== [] && $plan->reorderSkipped === null;
 
-        // Reordering needs every result above the page, which is only affordable so far in.
-        $beyondWindow = $wantsReordering && $reach > self::REORDER_LIMIT;
+        // Reordering needs every result above the page, which is only affordable so far in. Past
+        // that the page is still assembled where it has to be — only the reordering is given up.
+        if ($wantsReordering && $reach > self::REORDER_LIMIT) {
+            $plan->reorderSkipped = RulePlan::SKIPPED_BEYOND_WINDOW;
+            $wantsReordering = false;
+        }
 
-        if (!$beyondWindow && ($wantsReordering || $query->offset < $plan->placedReach())) {
+        // A page reaching into the placed results has to be assembled whatever else happens: only
+        // past placedReach() is the list organic enough to read at a shifted offset.
+        if ($wantsReordering || $query->offset < $plan->placedReach()) {
             $plan->assembles = true;
             $plan->windowOffset = 0;
             $plan->windowLimit = $reach;
@@ -546,10 +571,6 @@ class RuleEngine extends Component
             $plan->refetchesAdjusted = $wantsReordering && !$query->hasFilterOn('id');
 
             return;
-        }
-
-        if ($beyondWindow) {
-            $plan->reorderSkipped = RulePlan::SKIPPED_BEYOND_WINDOW;
         }
 
         $plan->assembles = false;
@@ -755,7 +776,7 @@ class RuleEngine extends Component
 
     public function getRules(): Rules
     {
-        return $this->_rules ??= $this->plugin()->getRules();
+        return $this->_rules ??= SearchKit::instance()->getRules();
     }
 
     public function setNormalization(Normalization $normalization): void
@@ -765,12 +786,6 @@ class RuleEngine extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
-    }
-
-    private function plugin(): SearchKit
-    {
-        return SearchKit::getInstance()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 }

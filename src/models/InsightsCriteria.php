@@ -17,6 +17,12 @@ class InsightsCriteria extends Model
 
     public ?int $indexId = null;
 
+    /**
+     * @var int[]|null Only searches of these indexes, narrowing further rather than widening. Null
+     * leaves it to `$indexId`, which is every index when that is null too.
+     */
+    public ?array $indexIds = null;
+
     /** @var int|null Only searches of this site. A search of every site is not one of them. */
     public ?int $siteId = null;
 
@@ -34,6 +40,13 @@ class InsightsCriteria extends Model
 
     /** @var int Milliseconds beyond which a search counts as slow. */
     public int $slowThreshold = 500;
+
+    /**
+     * @var array<int,int> Index => its own slow threshold, for a reading covering several indexes
+     * that do not agree about what slow means. Each search is judged by its own index; an index not
+     * named here falls back to `$slowThreshold`. Empty judges everything by `$slowThreshold`.
+     */
+    public array $slowThresholds = [];
 
     /**
      * What a control panel form posted. A date that cannot be read is left unset rather than
@@ -75,13 +88,44 @@ class InsightsCriteria extends Model
             'searchkit:insights',
             $metric,
             $this->indexId ?? '*',
+            $this->indexIds !== null ? implode('-', $this->sortedIndexIds()) : '*',
             $this->siteId ?? '*',
             $this->dateFrom?->getTimestamp() ?? '*',
             $this->dateTo?->getTimestamp() ?? '*',
             $this->limit,
             $this->minSearches,
             $this->slowThreshold,
+            // Part of the key: two readings judging slow differently are two different readings.
+            $this->thresholdKey(),
         ]);
+    }
+
+    /**
+     * @return int[]
+     */
+    private function sortedIndexIds(): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $this->indexIds ?? [])));
+        sort($ids);
+
+        return $ids;
+    }
+
+    private function thresholdKey(): string
+    {
+        if ($this->slowThresholds === []) {
+            return '*';
+        }
+
+        $thresholds = $this->slowThresholds;
+        ksort($thresholds);
+        $parts = [];
+
+        foreach ($thresholds as $indexId => $threshold) {
+            $parts[] = (int)$indexId . '=' . (int)$threshold;
+        }
+
+        return implode(',', $parts);
     }
 
     private static function readInteger(mixed $value): ?int

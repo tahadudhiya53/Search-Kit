@@ -11,7 +11,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 
 /**
  * Works out what a hit matched on, from the index's own searchable values. It only fills in what a
@@ -270,7 +269,6 @@ class Highlighting extends Component
 
     public function getDocuments(): Documents
     {
-        return $this->_documents ??= SearchKit::getInstance()?->getDocuments()
-            ?? throw new InvalidConfigException('SearchKit is not installed or is disabled.');
+        return $this->_documents ??= SearchKit::instance()->getDocuments();
     }
 }

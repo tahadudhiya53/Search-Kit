@@ -1,0 +1,75 @@
+{% extends "_layouts/cp" %}
+
+{% set title = "API keys"|t('search-kit') %}
+{% set selectedSubnavItem = 'api-keys' %}
+
+{% block actionButton %}
+    <a href="{{ url('search-kit/api-keys/new') }}" class="btn submit add icon">{{ "New API key"|t('search-kit') }}</a>
+{% endblock %}
+
+{% block content %}
+    <div class="readable">
+        <p>{{ "An API key is what the search API is reached with. It searches published content only, in the indexes it is given."|t('search-kit') }}</p>
+    </div>
+
+    {% if newKey %}
+        <div class="pane">
+            <h2>{{ "Your new API key"|t('search-kit') }}</h2>
+            <p>{{ "This is the only time it is shown. Copy it now — it cannot be recovered, only replaced."|t('search-kit') }}</p>
+            <code class="break-word">{{ newKey }}</code>
+        </div>
+    {% endif %}
+
+    {% if keys is empty %}
+        <p>{{ "No API keys yet."|t('search-kit') }}</p>
+    {% else %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th scope="col">{{ "Name"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Key"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Indexes"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Rate limit"|t('search-kit') }}</th>
+                    <th scope="col">{{ "Last used"|t('search-kit') }}</th>
+                    <th scope="col"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for key in keys %}
+                    <tr>
+                        <th scope="row" data-title="{{ 'Name'|t('search-kit') }}">
+                            <span class="status {{ key.enabled ? 'enabled' : 'disabled' }}"></span>
+                            <a href="{{ url('search-kit/api-keys/' ~ key.id) }}">{{ key.name }}</a>
+                        </th>
+                        <td data-title="{{ 'Key'|t('search-kit') }}"><code>{{ key.maskedKey }}</code></td>
+                        <td data-title="{{ 'Indexes'|t('search-kit') }}">
+                            {%- if key.coversAllIndexes() -%}
+                                {{ "All indexes"|t('search-kit') }}
+                            {%- else -%}
+                                {{ indexes|filter(i => i.id in key.indexIds)|map(i => i.name)|join(', ') }}
+                            {%- endif -%}
+                        </td>
+                        <td data-title="{{ 'Rate limit'|t('search-kit') }}">
+                            {%- if key.hasRateLimit() -%}
+                                {{ "{limit} a minute"|t('search-kit', { limit: key.rateLimit }) }}
+                            {%- else -%}
+                                {{ "None"|t('search-kit') }}
+                            {%- endif -%}
+                        </td>
+                        <td data-title="{{ 'Last used'|t('search-kit') }}">
+                            {{ key.dateLastUsed ? key.dateLastUsed|datetime('short') : "Never"|t('search-kit') }}
+                        </td>
+                        <td class="thin">
+                            <form method="post" accept-charset="UTF-8" class="inline-block">
+                                {{ csrfInput() }}
+                                {{ actionInput('search-kit/api-keys/delete') }}
+                                {{ hiddenInput('keyId', key.id) }}
+                                <button type="submit" class="btn" data-confirm="{{ 'Revoke this API key? Anything using it will stop working.'|t('search-kit') }}">{{ "Revoke"|t('search-kit') }}</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+{% endblock %}

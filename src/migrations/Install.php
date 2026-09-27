@@ -18,6 +18,7 @@ class Install extends Migration
     {
         $this->createTables();
         $this->createAnalyticsTables();
+        $this->createApiTables();
         $this->createIndexes();
         $this->addForeignKeys();
 
@@ -27,6 +28,7 @@ class Install extends Migration
     public function safeDown(): bool
     {
         // Dropped child-first so the foreign keys go with the tables.
+        $this->dropTableIfExists(Table::APIKEYS);
         $this->dropTableIfExists(Table::DASHBOARDLAYOUTS);
         $this->dropTableIfExists(Table::SEARCHCLICKS);
         $this->dropTableIfExists(Table::SEARCHEVENTS);
@@ -182,7 +184,9 @@ class Install extends Migration
             // The same text reduced the way the index reduces it, which is what queries group by.
             'normalizedQuery' => $this->string(Analytics::MAX_QUERY_LENGTH)->notNull(),
             'correctedQuery' => $this->string(Analytics::MAX_QUERY_LENGTH),
-            'language' => $this->string(24)->notNull(),
+            // The language the text was read in, or null for a search covering sites written in
+            // more than one — where no single language is a true answer.
+            'language' => $this->string(24),
             'resultCount' => $this->integer()->notNull()->defaultValue(0),
             // The results this search actually returned, which is the only thing a click may name.
             // Bounded, so a wide result window cannot turn one search into unbounded storage.
@@ -211,6 +215,31 @@ class Install extends Migration
             'id' => $this->primaryKey(),
             'userId' => $this->integer()->notNull(),
             'layout' => $this->text(),
+            'dateCreated' => $this->dateTime()->notNull(),
+            'dateUpdated' => $this->dateTime()->notNull(),
+            'uid' => $this->uid(),
+        ]);
+    }
+
+    /**
+     * The keys the search API is reached with. A key is only ever stored as a digest, so the key
+     * itself exists nowhere after it has been shown to whoever created it.
+     */
+    private function createApiTables(): void
+    {
+        $this->createTable(Table::APIKEYS, [
+            'id' => $this->primaryKey(),
+            'name' => $this->string()->notNull(),
+            // What the key hashes to, which is the only thing a request is ever matched against.
+            'hash' => $this->char(64)->notNull(),
+            // The opening characters of the key, so one can be told from another once it is gone.
+            'prefix' => $this->string(16)->notNull(),
+            'enabled' => $this->boolean()->notNull()->defaultValue(true),
+            // The indexes this key may search. An empty list means every one of them.
+            'indexIds' => $this->text(),
+            // Requests a minute this key may make, or null for no limit of its own.
+            'rateLimit' => $this->integer(),
+            'dateLastUsed' => $this->dateTime(),
             'dateCreated' => $this->dateTime()->notNull(),
             'dateUpdated' => $this->dateTime()->notNull(),
             'uid' => $this->uid(),
@@ -254,6 +283,9 @@ class Install extends Migration
         $this->createIndex(null, Table::SEARCHCLICKS, ['elementId'], false);
 
         $this->createIndex(null, Table::DASHBOARDLAYOUTS, ['userId'], true);
+
+        // Every API request is one lookup by digest, which is the only way back to a key.
+        $this->createIndex(null, Table::APIKEYS, ['hash'], true);
     }
 
     private function addForeignKeys(): void

@@ -2,7 +2,7 @@
 
 namespace Tahadudhiya\SearchKit\base;
 
-use craft\base\ComponentInterface;
+use craft\base\ConfigurableComponentInterface;
 use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\models\ProviderStatus;
 use Tahadudhiya\SearchKit\models\SearchDocument;
@@ -12,8 +12,9 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 
 /**
  * The single seam between SearchKit and a search engine. Core talks to this, never to an engine.
+ * Configurable, because a provider reaching an external service has to be told how to reach it.
  */
-interface SearchProviderInterface extends ComponentInterface
+interface SearchProviderInterface extends ConfigurableComponentInterface
 {
     /**
      * What this provider can do. Core checks this instead of branching on the provider's identity.
@@ -28,6 +29,15 @@ interface SearchProviderInterface extends ComponentInterface
      * @throws \Tahadudhiya\SearchKit\errors\ProviderException if the search cannot be executed.
      */
     public function search(SearchQuery $query, SearchIndex $index): SearchResult;
+
+    /**
+     * How the whole result set this query matches divides up by each field it asked to be counted
+     * by. It describes the search rather than the page, so nothing here reads the window.
+     *
+     * @return \Tahadudhiya\SearchKit\models\Facet[]
+     * @throws \Tahadudhiya\SearchKit\errors\ProviderException
+     */
+    public function facets(SearchQuery $query, SearchIndex $index): array;
 
     /**
      * Adds or replaces one document in the index. Documents are built for the provider, so no
@@ -56,4 +66,14 @@ interface SearchProviderInterface extends ComponentInterface
      * Whether the provider can currently serve this index, for reporting to administrators.
      */
     public function status(SearchIndex $index): ProviderStatus;
+
+    /**
+     * The parts of what this provider reported about a search that may be shown to a developer.
+     * Nothing is shown unless a provider names it here, so a credential, a header or a setting can
+     * never reach the debugger by being put in a result's metadata.
+     *
+     * @param array<string,mixed> $metadata What the provider reported on the result.
+     * @return array<string,mixed>
+     */
+    public function diagnostics(array $metadata): array;
 }

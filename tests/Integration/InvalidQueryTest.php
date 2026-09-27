@@ -40,7 +40,7 @@ class InvalidQueryTest extends SearchContentTestCase
     public static function rejectedParameters(): iterable
     {
         yield 'unknown parameter' => [['sections' => ['news']], 'params'];
-        yield 'unknown filter operator' => [['filters' => ['slug' => ['between' => 1]]], 'filters'];
+        yield 'unknown filter operator' => [['filters' => ['slug' => ['roughly' => 1]]], 'filters'];
         yield 'malformed filter' => [['filters' => [['operator' => 'eq']]], 'filters'];
         yield 'filters of the wrong shape' => [['filters' => 'slug'], 'filters'];
         yield 'unknown sort direction' => [['orderBy' => 'title sideways'], 'sorts'];
@@ -72,6 +72,7 @@ class InvalidQueryTest extends SearchContentTestCase
         yield 'negative offset' => [['offset' => -5], 'offset'];
         yield 'snippet beyond the maximum' => [['snippetLength' => SearchQuery::MAX_SNIPPET_LENGTH + 1], 'snippetLength'];
         yield 'a filter value nothing can compare' => [['filters' => [['field' => 'slug', 'value' => []]]], 'filters'];
+        yield 'a range without both bounds' => [['filters' => ['id' => ['between' => [1]]]], 'filters'];
     }
 
     /**

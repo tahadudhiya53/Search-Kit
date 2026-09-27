@@ -16,7 +16,6 @@ use Tahadudhiya\SearchKit\models\SearchResult;
 use Tahadudhiya\SearchKit\SearchKit;
 use Throwable;
 use yii\base\Component;
-use yii\base\InvalidConfigException;
 use yii\caching\TagDependency;
 use yii\db\Expression;
 
@@ -54,19 +53,26 @@ class Analytics extends Component
     {
         $settings = $index->getAnalyticsSettings();
 
-        if (!$settings->enabled || $index->id === null) {
+        // A search run to diagnose one is not something anybody searched for, so it is not counted.
+        if (!$settings->enabled || $index->id === null || $query->isDebugging()) {
             return null;
         }
 
-        $language = $this->language($query, $index);
+        $scope = $query->getSiteScope($index->siteId);
+        $language = $this->getNormalization()->languageFor($scope);
         $token = StringHelper::UUID();
 
         try {
             Db::insert(Table::SEARCHEVENTS, [
                 'indexId' => $index->id,
-                'siteId' => $query->siteId ?? $index->siteId,
+                'siteId' => $query->getSiteScopeId($index->siteId),
                 'query' => $this->trim($query->text),
-                'normalizedQuery' => $this->trim($this->getNormalization()->normalize($query->text, $language)),
+                // Reduced in the first of the languages searched, which is what groups two spellings
+                // of one query together. It is a grouping key, not a claim about the search.
+                'normalizedQuery' => $this->trim($this->getNormalization()->normalize(
+                    $query->text,
+                    $this->getNormalization()->languagesFor($scope)[0],
+                )),
                 'correctedQuery' => $result->correctedText !== null ? $this->trim($result->correctedText) : null,
                 'language' => $language,
                 'resultCount' => $result->total,
@@ -285,25 +291,6 @@ class Analytics extends Component
         TagDependency::invalidate(Craft::$app->getCache(), self::CACHE_TAG);
     }
 
-    /**
-     * The language the query text was read in, which is what decides how it reduces. A search of one
-     * site is read in that site's language; one covering several is read in the application's.
-     */
-    private function language(SearchQuery $query, SearchIndex $index): string
-    {
-        $siteId = $query->siteId ?? $index->siteId;
-
-        if ($siteId !== null) {
-            $site = Craft::$app->getSites()->getSiteById($siteId, true);
-
-            if ($site !== null) {
-                return $site->language;
-            }
-        }
-
-        return Craft::$app->language;
-    }
-
     private function trim(string $text): string
     {
         return mb_substr($text, 0, self::MAX_QUERY_LENGTH);
@@ -316,7 +303,7 @@ class Analytics extends Component
 
     public function getNormalization(): Normalization
     {
-        return $this->_normalization ??= $this->plugin()->getNormalization();
+        return $this->_normalization ??= SearchKit::instance()->getNormalization();
     }
 
     public function setIndexes(Indexes $indexes): void
@@ -326,17 +313,6 @@ class Analytics extends Component
 
     public function getIndexes(): Indexes
     {
-        return $this->_indexes ??= $this->plugin()->getIndexes();
-    }
-
-    private function plugin(): SearchKit
-    {
-        $plugin = SearchKit::getInstance();
-
-        if ($plugin === null) {
-            throw new InvalidConfigException('SearchKit is not installed or is disabled.');
-        }
-
-        return $plugin;
+        return $this->_indexes ??= SearchKit::instance()->getIndexes();
     }
 }

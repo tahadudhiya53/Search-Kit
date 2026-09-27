@@ -1,0 +1,36 @@
+{% import "_includes/forms" as forms %}
+
+{{ forms.autosuggestField({
+    label: "Server address"|t('search-kit'),
+    id: 'url',
+    name: 'url',
+    class: 'code',
+    value: provider.url,
+    errors: provider.getErrors('url'),
+    required: true,
+    suggestEnvVars: true,
+    placeholder: 'http://localhost:7700',
+    instructions: "Where Meilisearch is reachable. An environment variable keeps it out of the database."|t('search-kit'),
+}) }}
+
+{{ forms.autosuggestField({
+    label: "API key"|t('search-kit'),
+    id: 'apiKey',
+    name: 'apiKey',
+    class: 'code',
+    value: provider.apiKey,
+    errors: provider.getErrors('apiKey'),
+    suggestEnvVars: true,
+    placeholder: '$MEILISEARCH_API_KEY',
+    instructions: "Must name an environment variable, so the key itself is never stored here or shown back. Leave empty for a server that needs no key."|t('search-kit'),
+}) }}
+
+{{ forms.textField({
+    label: "Index prefix"|t('search-kit'),
+    id: 'indexPrefix',
+    name: 'indexPrefix',
+    class: 'code',
+    value: provider.indexPrefix,
+    errors: provider.getErrors('indexPrefix'),
+    instructions: "Put in front of the Meilisearch index name, so two environments can share one server."|t('search-kit'),
+}) }}

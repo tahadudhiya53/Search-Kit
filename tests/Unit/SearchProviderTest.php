@@ -7,6 +7,7 @@ use Tahadudhiya\SearchKit\enums\ProviderCapability;
 use Tahadudhiya\SearchKit\errors\UnsupportedCapabilityException;
 use Tahadudhiya\SearchKit\models\SearchDocument;
 use Tahadudhiya\SearchKit\models\SearchIndex;
+use Tahadudhiya\SearchKit\models\SearchQuery;
 use Tahadudhiya\SearchKit\providers\CraftProvider;
 use Tahadudhiya\SearchKit\Tests\Support\MinimalProvider;
 
@@ -38,6 +39,17 @@ class SearchProviderTest extends TestCase
         $provider->deleteDocument(
             new SearchIndex(['handle' => 'siteSearch']),
             SearchDocument::forDeletion(1, 1, 'craft\\elements\\Entry', 'siteSearch'),
+        );
+    }
+
+    public function testCountingIsRejectedWhenNotDeclared(): void
+    {
+        $provider = new MinimalProvider();
+
+        $this->expectException(UnsupportedCapabilityException::class);
+        $provider->facets(
+            SearchQuery::create('siteSearch', 'boots', ['facets' => 'sectionId']),
+            new SearchIndex(['handle' => 'siteSearch']),
         );
     }
 
